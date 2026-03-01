@@ -37,7 +37,10 @@
     "lint": "eslint src --ext .ts --max-warnings 0",
     "format": "prettier --write src",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "release:patch": "npm version patch && git push && git push --tags",
+    "release:minor": "npm version minor && git push && git push --tags",
+    "release:major": "npm version major && git push && git push --tags"
   },
   "files": [
     "dist/**/*.js",
