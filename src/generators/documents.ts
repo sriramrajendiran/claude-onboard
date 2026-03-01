@@ -22,11 +22,16 @@ import {
   renderUpdateDocsCommand,
   renderPRReviewCommand,
   renderAskCommand,
+  renderArchitectureContext,
+  renderPatternsContext,
+  renderHotfilesContext,
+  AUTO_START,
+  AUTO_END,
+  flattenModules,
 } from "./templates.js";
+import { GitReader } from "../analyzers/git.js";
+import type { AnalysisSnapshot } from "../types.js";
 import { SkillBuilder } from "./skills.js";
-
-const AUTO_START = "<!-- onboarder:auto-start -->";
-const AUTO_END = "<!-- onboarder:auto-end -->";
 
 export class DocumentGenerator {
   constructor(
@@ -46,6 +51,29 @@ export class DocumentGenerator {
     for (const [path, content] of docFiles) {
       if (content) files.push(this.smartWrite(path, content, force));
     }
+
+    // ── Layered context files ──
+    files.push(
+      this.smartWrite(
+        ".claude/context/architecture.md",
+        renderArchitectureContext(this.analysis),
+        force,
+      ),
+    );
+    files.push(
+      this.smartWrite(
+        ".claude/context/patterns.md",
+        renderPatternsContext(this.analysis, this.humanAnswers),
+        force,
+      ),
+    );
+    files.push(
+      this.smartWrite(
+        ".claude/context/hotfiles.md",
+        renderHotfilesContext(this.analysis),
+        force,
+      ),
+    );
 
     // Commands
     const commands: [string, string][] = [
@@ -70,7 +98,7 @@ export class DocumentGenerator {
     // Folder-level CLAUDE.md for progressive context disclosure
     const sa = this.analysis.sourceAnalysis;
     if (sa) {
-      const allModules = this.flattenModules(sa.modules);
+      const allModules = flattenModules(sa.modules);
       for (const dir of sa.hotpathDirs) {
         const module = allModules.find((m) => m.path === dir);
         if (module) {
@@ -80,11 +108,44 @@ export class DocumentGenerator {
       }
     }
 
+    // ── Save analysis snapshot for incremental updates ──
+    const git = new GitReader(this.repoPath);
+    const currentSha = git.getHead();
+    if (currentSha) {
+      const snapshot: AnalysisSnapshot = {
+        sha: currentSha,
+        analyzedAt: new Date().toISOString(),
+        fileFrequency: Object.fromEntries(
+          this.analysis.criticalPaths.map((p) => [p.path, p.changeCount]),
+        ),
+        coChangeMatrix: {},
+        importGraph: this.analysis.importGraph
+          ? {
+              inDegree: Object.fromEntries(this.analysis.importGraph.inDegree),
+              topByFanIn: this.analysis.importGraph.topByFanIn,
+            }
+          : { inDegree: {}, topByFanIn: [] },
+        keyTypes: (this.analysis.sourceAnalysis?.keyTypes ?? []).map((kt) => ({
+          name: kt.name,
+          file: kt.file,
+          kind: kt.kind,
+          linesOfCode: kt.linesOfCode,
+          description: kt.description,
+        })),
+        criticalPaths: this.analysis.criticalPaths,
+      };
+      this.writeFile(
+        join(this.repoPath, ".claude", ".onboard-snapshot.json"),
+        JSON.stringify(snapshot, null, 2),
+      );
+    }
+
     // Meta file
     const metaContent = JSON.stringify(
       {
         version: "0.1.0",
         lastUpdated: new Date().toISOString(),
+        lastAnalyzedSha: currentSha ?? "",
         repoName: this.analysis.repoName,
         commitsAnalyzed: this.analysis.commits.length,
         primaryLanguage: this.analysis.primaryLanguage,
@@ -165,17 +226,7 @@ export class DocumentGenerator {
     return `${beforeAuto}${autoSection}${afterAuto}`;
   }
 
-  private flattenModules(modules: import("../analyzers/source.js").ModuleInfo[]): import("../analyzers/source.js").ModuleInfo[] {
-    const flat: import("../analyzers/source.js").ModuleInfo[] = [];
-    const recurse = (ms: import("../analyzers/source.js").ModuleInfo[]) => {
-      for (const m of ms) {
-        flat.push(m);
-        recurse(m.children);
-      }
-    };
-    recurse(modules);
-    return flat;
-  }
+
 
   private writeFile(fullPath: string, content: string): void {
     const dir = dirname(fullPath);

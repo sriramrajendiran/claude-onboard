@@ -1,3 +1,16 @@
+// ── Enums ───────────────────────────────────────────────────────────────────
+
+export enum AnalysisTier {
+  /** Instant: git metadata only (branch, remotes, HEAD SHA). No log parsing. */
+  Zero = 0,
+  /** Fast (<2s): single-pass git log + language detection + conventions. */
+  One = 1,
+  /** Medium (<15s): deep source analysis + import graph + co-change. Default for init. */
+  Two = 2,
+  /** Background (no limit): PR analysis + full blame. */
+  Three = 3,
+}
+
 // ── Analyzer Output ─────────────────────────────────────────────────────────
 
 export interface Commit {
@@ -104,6 +117,12 @@ export interface RepositoryAnalysis {
   // Deep source analysis
   sourceAnalysis?: import("./analyzers/source.js").SourceAnalysis;
 
+  // Import graph (fan-in analysis)
+  importGraph?: ImportGraphData;
+
+  // Co-change coupling
+  coChangePairs?: CoChangePair[];
+
   testCoverage: "high" | "medium" | "low" | "none";
   documentationCoverage: "high" | "medium" | "low" | "none";
   ciCoverage: "full" | "partial" | "none";
@@ -118,6 +137,7 @@ export interface OnboardOptions {
   maxPRs: number;
   forceRegenerate: boolean;
   verbose: boolean;
+  tier?: AnalysisTier;
 }
 
 export interface UpdateOptions {
@@ -202,5 +222,60 @@ export interface HumanAnswers {
   codePatterns?: string[];
   domainContext?: string[];
   testingNotes?: string;
+  domainQA?: Array<{ question: string; answer: string }>;
   answeredAt?: string;
+}
+
+export interface SmartQuestion {
+  question: string;
+  context?: string;
+  dimension: string;
+  category: "hot-file" | "architecture" | "coupling" | "load-bearing" | "tribal" | "gap";
+}
+
+// ── Import Graph ────────────────────────────────────────────────────────────
+
+export interface ImportGraphData {
+  /** adjacency[file] = set of files it imports (resolved to repo-relative paths) */
+  adjacency: Map<string, Set<string>>;
+  /** inDegree[file] = number of files that import this file */
+  inDegree: Map<string, number>;
+  /** Top files sorted by in-degree (most depended-upon) */
+  topByFanIn: Array<{ file: string; fanIn: number }>;
+}
+
+// ── Co-change Coupling ──────────────────────────────────────────────────────
+
+export interface CoChangePair {
+  fileA: string;
+  fileB: string;
+  /** Number of commits where both files changed together */
+  count: number;
+  /** Coupling strength: count / min(freqA, freqB) */
+  strength: number;
+}
+
+// ── Analysis Snapshot (for incremental updates) ─────────────────────────────
+
+export interface AnalysisSnapshot {
+  sha: string;
+  analyzedAt: string;
+  fileFrequency: Record<string, number>;
+  coChangeMatrix: Record<string, Record<string, number>>;
+  importGraph: {
+    inDegree: Record<string, number>;
+    topByFanIn: Array<{ file: string; fanIn: number }>;
+  };
+  keyTypes: Array<{
+    name: string;
+    file: string;
+    kind: string;
+    linesOfCode: number;
+    description: string;
+  }>;
+  criticalPaths: Array<{
+    path: string;
+    changeCount: number;
+    lastChanged: string;
+  }>;
 }

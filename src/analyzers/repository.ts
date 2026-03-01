@@ -1,6 +1,6 @@
-import { resolve, basename } from "node:path";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { resolve, basename, join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, statSync, mkdirSync } from "node:fs";
+import { AnalysisTier } from "../types.js";
 import type {
   OnboardOptions,
   UpdateOptions,
@@ -9,13 +9,18 @@ import type {
   DocHealthReport,
   ConfidenceScore,
   ConfidenceGap,
+  CoChangePair,
+  AnalysisSnapshot,
+  SmartQuestion,
 } from "../types.js";
 import { GitReader } from "./git.js";
+import type { SinglePassResult } from "./git.js";
 import { LanguageDetector } from "./languages.js";
 import { ConventionExtractor } from "./conventions.js";
 import { ArchitectureInferrer } from "./architecture.js";
 import { GitHubClient } from "./github.js";
 import { SourceAnalyzer } from "./source.js";
+import { ImportGraphBuilder } from "./imports.js";
 
 export class RepositoryAnalyzer {
   private readonly options: OnboardOptions;
@@ -28,28 +33,83 @@ export class RepositoryAnalyzer {
     onProgress?: (step: string, pct: number) => void,
   ): Promise<RepositoryAnalysis> {
     const { repoPath, maxCommits, maxPRs, githubRepo } = this.options;
+    const tier = this.options.tier ?? AnalysisTier.Two;
 
+    const repoName = basename(repoPath);
     const git = new GitReader(repoPath);
     if (!git.isGitRepo()) {
       throw new Error(`Not a git repository: ${repoPath}`);
     }
 
+    // ── Phase 0 (always): Validate git repo, get metadata ──
+    onProgress?.("Reading repository metadata", 5);
+    const defaultBranch = git.getDefaultBranch();
+    const remoteUrl = git.getRemoteUrl();
+
+    if (tier === AnalysisTier.Zero) {
+      onProgress?.("Finalizing analysis", 100);
+      return this.buildMinimalAnalysis(repoPath, repoName, defaultBranch, remoteUrl);
+    }
+
+    // ── Phase 1 (tier >= 1): Single-pass git log + language detection + conventions ──
     onProgress?.("Reading git history", 10);
-    const commits = git.getCommits({
+    const { commits, fileFrequency: fileFreq, coChangeMatrix } = git.getCommitsSinglePass({
       limit: maxCommits,
       skipMerges: false,
+      branch: defaultBranch,
     });
-
-    onProgress?.("Analyzing file changes", 20);
-    const fileFreq = git.getFileChangeFrequency(maxCommits);
+    const trackedFiles = git.getTrackedFiles();
 
     onProgress?.("Detecting languages and frameworks", 30);
     const langDetector = new LanguageDetector(repoPath);
     const langInfo = langDetector.detect();
 
-    onProgress?.("Extracting conventions", 50);
+    onProgress?.("Extracting conventions", 40);
     const conventionExtractor = new ConventionExtractor(repoPath, commits);
     const conventions = conventionExtractor.extract();
+
+    const primaryLanguage = langInfo.languages[0]?.name ?? "Unknown";
+
+    if (tier === AnalysisTier.One) {
+      onProgress?.("Analyzing contributors", 80);
+      const contributors = this.buildContributors(commits);
+      const criticalPaths = this.buildCriticalPaths(fileFreq, commits);
+
+      onProgress?.("Finalizing analysis", 100);
+      return {
+        repoPath,
+        repoName,
+        defaultBranch,
+        remoteUrl,
+        analyzedAt: new Date().toISOString(),
+        commits,
+        contributors,
+        primaryLanguage,
+        languages: langInfo.languages,
+        frameworks: langInfo.frameworks,
+        testFrameworks: langInfo.testFrameworks,
+        buildTools: langInfo.buildTools,
+        ciSystems: langInfo.ciSystems,
+        packageManagers: langInfo.packageManagers,
+        conventions,
+        criticalPaths,
+        architecture: { style: "unknown", entryPoints: [], layers: [], keyModules: [], databasePatterns: [], apiPatterns: [], testStructure: "none", hasDockerfile: false, hasInfraAsCode: false },
+        patterns: [],
+        prInsights: [],
+        coChangePairs: this.buildCoChangePairs(coChangeMatrix, fileFreq),
+        testCoverage: this.assessTestCoverage(langInfo.testFrameworks, "none"),
+        documentationCoverage: this.assessDocCoverage(repoPath),
+        ciCoverage: this.assessCICoverage(langInfo.ciSystems),
+      };
+    }
+
+    // ── Phase 2 (tier >= 2): Deep source analysis + import graph + architecture in parallel ──
+    onProgress?.("Analyzing source code and imports", 50);
+    const sourceAnalyzer = new SourceAnalyzer(repoPath, fileFreq, commits, trackedFiles);
+    const importBuilder = new ImportGraphBuilder(repoPath, trackedFiles);
+
+    const sourceAnalysis = sourceAnalyzer.analyze();
+    const importGraph = importBuilder.build();
 
     onProgress?.("Inferring architecture", 60);
     const archInferrer = new ArchitectureInferrer(
@@ -64,9 +124,9 @@ export class RepositoryAnalyzer {
     onProgress?.("Computing critical paths", 80);
     const criticalPaths = this.buildCriticalPaths(fileFreq, commits);
 
-    // PR analysis
+    // ── Phase 3 (tier >= 3): PR analysis ──
     let prInsights: RepositoryAnalysis["prInsights"] = [];
-    if (githubRepo && maxPRs > 0) {
+    if (tier >= AnalysisTier.Three && githubRepo && maxPRs > 0) {
       onProgress?.("Fetching PR data", 90);
       const ghClient = new GitHubClient({
         repo: githubRepo,
@@ -78,20 +138,13 @@ export class RepositoryAnalyzer {
       });
     }
 
-    onProgress?.("Scanning source code", 95);
-    const sourceAnalyzer = new SourceAnalyzer(repoPath, fileFreq);
-    const sourceAnalysis = sourceAnalyzer.analyze();
-
     onProgress?.("Finalizing analysis", 100);
-
-    const primaryLanguage =
-      langInfo.languages[0]?.name ?? "Unknown";
 
     return {
       repoPath,
-      repoName: basename(repoPath),
-      defaultBranch: git.getDefaultBranch(),
-      remoteUrl: git.getRemoteUrl(),
+      repoName,
+      defaultBranch,
+      remoteUrl,
       analyzedAt: new Date().toISOString(),
 
       commits,
@@ -112,6 +165,8 @@ export class RepositoryAnalyzer {
       patterns: [],
       prInsights,
       sourceAnalysis,
+      importGraph,
+      coChangePairs: this.buildCoChangePairs(coChangeMatrix, fileFreq),
 
       testCoverage: this.assessTestCoverage(langInfo.testFrameworks, architecture.testStructure),
       documentationCoverage: this.assessDocCoverage(repoPath),
@@ -119,24 +174,101 @@ export class RepositoryAnalyzer {
     };
   }
 
+  /**
+   * Incremental analysis: loads snapshot, gets delta since last SHA,
+   * merges into snapshot data. Returns null if nothing changed,
+   * or falls back to full analyze() if no snapshot exists.
+   */
   async analyzeIncremental(
-    updateOptions: UpdateOptions,
-  ): Promise<Partial<RepositoryAnalysis>> {
-    const git = new GitReader(updateOptions.repoPath);
-    const commitOpts: { limit: number; since?: string; skipMerges: boolean } = {
-      limit: 50,
+    _updateOptions: UpdateOptions,
+  ): Promise<{ analysis: RepositoryAnalysis; incremental: boolean } | null> {
+    const { repoPath } = this.options;
+    const git = new GitReader(repoPath);
+
+    // Load persisted snapshot
+    const snapshotPath = join(repoPath, ".claude", ".onboard-snapshot.json");
+    let snapshot: AnalysisSnapshot | null = null;
+    if (existsSync(snapshotPath)) {
+      try {
+        snapshot = JSON.parse(readFileSync(snapshotPath, "utf-8")) as AnalysisSnapshot;
+      } catch {
+        // ignore corrupt snapshot
+      }
+    }
+
+    const currentSha = git.getHead();
+
+    if (!snapshot || !currentSha) {
+      // No snapshot — fall back to full analysis
+      return { analysis: await this.analyze(), incremental: false };
+    }
+
+    if (snapshot.sha === currentSha) {
+      // Nothing changed
+      return null;
+    }
+
+    // Get only commits since the snapshot SHA
+    const delta = git.getCommitsSinglePass({
+      limit: 200,
+      since: snapshot.sha,
       skipMerges: false,
-    };
-    if (updateOptions.sinceCommit) commitOpts.since = updateOptions.sinceCommit;
-    const commits = git.getCommits(commitOpts);
+    });
 
-    const conventionExtractor = new ConventionExtractor(
-      updateOptions.repoPath,
-      commits,
+    // If delta found no new commits, still do a lightweight tier-1 analysis
+    if (delta.commits.length === 0) {
+      return null;
+    }
+
+    // Merge file frequency from snapshot + delta
+    const mergedFrequency = new Map<string, number>(
+      Object.entries(snapshot.fileFrequency),
     );
-    const conventions = conventionExtractor.extract();
+    for (const [file, count] of delta.fileFrequency) {
+      mergedFrequency.set(file, (mergedFrequency.get(file) ?? 0) + count);
+    }
 
-    return { commits, conventions };
+    // Update critical paths from merged frequency
+    const criticalPaths = [...mergedFrequency.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 50)
+      .map(([path, changeCount]) => ({ path, changeCount, lastChanged: "" }));
+
+    // Build co-change pairs from delta
+    const coChangePairs = this.buildCoChangePairs(delta.coChangeMatrix, mergedFrequency);
+
+    // Reconstruct import graph from snapshot
+    const importGraph: RepositoryAnalysis["importGraph"] = snapshot.importGraph
+      ? {
+          adjacency: new Map(),
+          inDegree: new Map(Object.entries(snapshot.importGraph.inDegree)),
+          topByFanIn: snapshot.importGraph.topByFanIn,
+        }
+      : undefined;
+
+    // Save updated snapshot
+    const updatedSnapshot: AnalysisSnapshot = {
+      sha: currentSha,
+      analyzedAt: new Date().toISOString(),
+      fileFrequency: Object.fromEntries(mergedFrequency),
+      coChangeMatrix: snapshot.coChangeMatrix,
+      importGraph: snapshot.importGraph,
+      keyTypes: snapshot.keyTypes,
+      criticalPaths,
+    };
+
+    const dir = join(repoPath, ".claude");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(snapshotPath, JSON.stringify(updatedSnapshot, null, 2), "utf-8");
+
+    // Do a quick tier-1 analysis for language/convention data, then merge in snapshot data
+    const tier1 = await this.analyze();
+    // Override with merged data from snapshot + delta
+    tier1.criticalPaths = criticalPaths;
+    tier1.coChangePairs = coChangePairs;
+    if (importGraph) tier1.importGraph = importGraph;
+
+    return { analysis: tier1, incremental: true };
   }
 
   async checkDocHealth(): Promise<DocHealthReport> {
@@ -172,8 +304,8 @@ export class RepositoryAnalyzer {
 
     const git = new GitReader(repoPath);
     const commitsSinceUpdate = lastUpdated
-      ? git.getCommits({ limit: 1000, skipMerges: true })
-          .filter((c) => c.date > lastUpdated).length
+      ? git.getCommitsSinglePass({ limit: 1000, skipMerges: true })
+          .commits.filter((c) => c.date > lastUpdated).length
       : 0;
 
     for (const file of expectedFiles) {
@@ -469,6 +601,136 @@ export class RepositoryAnalyzer {
         testing: { score: testScore, max: 10, details: testDetails },
       },
     };
+  }
+
+  generateSmartQuestions(analysis: RepositoryAnalysis, gaps: ConfidenceGap[], existingAnswers?: import("../types.js").HumanAnswers): SmartQuestion[] {
+    const questions: SmartQuestion[] = [];
+    const sa = analysis.sourceAnalysis;
+    // Track already-answered questions to avoid re-asking
+    const answeredQuestions = new Set(existingAnswers?.domainQA?.map((qa) => qa.question) ?? []);
+
+    // ── Hot file questions (up to 3) ──
+    const topFiles = analysis.criticalPaths.slice(0, 3);
+    for (const f of topFiles) {
+      const name = basename(f.path);
+      questions.push({
+        question: `${name} changed ${f.changeCount} times recently — what are the key business rules or invariants it enforces?`,
+        context: `Most frequently changed file: ${f.path}`,
+        dimension: "domainQA",
+        category: "hot-file",
+      });
+    }
+
+    // ── Architecture "why" questions (up to 2) ──
+    const arch = analysis.architecture;
+    if (arch.style !== "unknown") {
+      questions.push({
+        question: `The codebase appears to be a ${arch.style}. Why was this architecture chosen? Any constraints or trade-offs to know about?`,
+        context: `Detected ${arch.layers.length} layers, ${arch.entryPoints.length} entry points`,
+        dimension: "domainQA",
+        category: "architecture",
+      });
+    }
+    if (sa && sa.serviceMap.length > 1) {
+      const names = sa.serviceMap.slice(0, 5).map((s) => s.name).join(", ");
+      questions.push({
+        question: `I see ${sa.serviceMap.length} services (${names}). How do they communicate? Any ordering dependencies or gotchas?`,
+        context: "Detected from service map analysis",
+        dimension: "domainQA",
+        category: "architecture",
+      });
+    }
+
+    // ── Co-change coupling questions (up to 2) ──
+    if (analysis.coChangePairs) {
+      for (const pair of analysis.coChangePairs.slice(0, 2)) {
+        const nameA = basename(pair.fileA);
+        const nameB = basename(pair.fileB);
+        questions.push({
+          question: `${nameA} and ${nameB} always change together (${pair.count} times). Is this intentional coupling or tech debt?`,
+          context: `Co-change strength: ${(pair.strength * 100).toFixed(0)}%`,
+          dimension: "domainQA",
+          category: "coupling",
+        });
+      }
+    }
+
+    // ── Load-bearing module questions (up to 2) ──
+    if (analysis.importGraph) {
+      for (const mod of analysis.importGraph.topByFanIn.slice(0, 2)) {
+        const name = basename(mod.file);
+        questions.push({
+          question: `${name} is imported by ${mod.fanIn} other files. Any rules for modifying it? Breaking change risks?`,
+          context: `High fan-in module: ${mod.file}`,
+          dimension: "domainQA",
+          category: "load-bearing",
+        });
+      }
+    }
+
+    // ── Tribal knowledge questions (always asked, up to 3) ──
+    questions.push({
+      question: "What are the most common gotchas or pitfalls new developers hit in this codebase?",
+      dimension: "domainQA",
+      category: "tribal",
+    });
+    questions.push({
+      question: "Are there any environment setup steps or secrets/config not documented anywhere?",
+      dimension: "domainQA",
+      category: "tribal",
+    });
+    questions.push({
+      question: "Any areas of the codebase that are particularly fragile, slow, or tricky to work with?",
+      dimension: "domainQA",
+      category: "tribal",
+    });
+
+    // ── Gap-driven questions (from confidence scoring) ──
+    for (const gap of gaps.filter((g) => g.impact === "high" || g.impact === "medium")) {
+      questions.push({
+        question: gap.question,
+        context: gap.context,
+        dimension: gap.dimension,
+        category: "gap",
+      });
+    }
+
+    // Filter out already-answered questions, then cap at 12
+    const filtered = questions.filter((q) => !answeredQuestions.has(q.question));
+    return filtered.slice(0, 12);
+  }
+
+  private buildMinimalAnalysis(repoPath: string, repoName: string, defaultBranch: string, remoteUrl: string | null): RepositoryAnalysis {
+    return {
+      repoPath, repoName, defaultBranch, remoteUrl,
+      analyzedAt: new Date().toISOString(),
+      commits: [], contributors: [],
+      primaryLanguage: "unknown",
+      languages: [], frameworks: [], testFrameworks: [],
+      buildTools: [], ciSystems: [], packageManagers: [],
+      conventions: [], criticalPaths: [],
+      architecture: { style: "unknown", entryPoints: [], layers: [], keyModules: [], databasePatterns: [], apiPatterns: [], testStructure: "none", hasDockerfile: false, hasInfraAsCode: false },
+      patterns: [], prInsights: [],
+      testCoverage: "none", documentationCoverage: "none", ciCoverage: "none",
+    };
+  }
+
+  private buildCoChangePairs(
+    matrix: Map<string, Map<string, number>>,
+    fileFreq: Map<string, number>,
+    topN = 20,
+  ): CoChangePair[] {
+    const pairs: CoChangePair[] = [];
+    for (const [fileA, innerMap] of matrix) {
+      for (const [fileB, count] of innerMap) {
+        if (count < 3) continue;
+        const freqA = fileFreq.get(fileA) ?? 1;
+        const freqB = fileFreq.get(fileB) ?? 1;
+        const strength = count / Math.min(freqA, freqB);
+        pairs.push({ fileA, fileB, count, strength });
+      }
+    }
+    return pairs.sort((a, b) => b.strength - a.strength).slice(0, topN);
   }
 
   private buildContributors(

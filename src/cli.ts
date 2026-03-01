@@ -7,7 +7,8 @@ import { DocumentGenerator } from "./generators/documents.js";
 import { HookInstaller } from "./hooks/installer.js";
 import { GitHubClient } from "./analyzers/github.js";
 import { join, dirname } from "node:path";
-import type { OnboardOptions, GeneratedFile, HumanAnswers, ConfidenceScore, ConfidenceGap } from "./types.js";
+import { AnalysisTier } from "./types.js";
+import type { OnboardOptions, UpdateOptions, GeneratedFile, HumanAnswers, ConfidenceScore, ConfidenceGap, SmartQuestion } from "./types.js";
 
 const program = new Command();
 
@@ -69,7 +70,8 @@ function hasNewContent(answers: HumanAnswers): boolean {
     answers.architectureNotes ||
     answers.codePatterns?.length ||
     answers.domainContext?.length ||
-    answers.testingNotes
+    answers.testingNotes ||
+    answers.domainQA?.length
   );
 }
 
@@ -110,6 +112,14 @@ function computeConfidenceWithAnswers(
     );
     score.breakdown.domainContext.details.push("human-provided");
   }
+  if (answers.domainQA?.length) {
+    const boost = Math.min(10, answers.domainQA.length * 3);
+    score.breakdown.domainContext.score = Math.min(
+      score.breakdown.domainContext.max,
+      score.breakdown.domainContext.score + boost,
+    );
+    score.breakdown.domainContext.details.push(`${answers.domainQA.length} Q&A`);
+  }
   if (answers.testingNotes) {
     score.breakdown.testing.score = Math.min(
       score.breakdown.testing.max,
@@ -136,37 +146,82 @@ function computeConfidenceWithAnswers(
   return score;
 }
 
-/** Prompt the user for ONE round of gap-filling. Returns answers (may be empty if all skipped). */
+/** Prompt the user with all questions in a batch editor. Returns answers. */
 async function promptForGaps(
-  gaps: ConfidenceGap[],
+  questions: SmartQuestion[],
   existing: HumanAnswers,
   c: typeof import("chalk").default,
 ): Promise<HumanAnswers> {
-  const { input } = await import("@inquirer/prompts");
+  const { editor } = await import("@inquirer/prompts");
   const answers: HumanAnswers = { ...existing };
 
-  for (const gap of gaps) {
-    const impactBadge = gap.impact === "high" ? c.red("[high impact]") : c.yellow("[medium impact]");
-    console.log(`\n   ${impactBadge} ${c.bold(gap.dimension)}`);
-    console.log(`   ${c.gray(gap.context)}`);
-    if (gap.currentGuess) console.log(`   ${c.gray(`Current guess: ${gap.currentGuess}`)}`);
+  // Show preview of questions
+  console.log(`\n   ${c.blue("📋")} ${c.bold(`${questions.length} questions about your codebase`)} (opens in $EDITOR):\n`);
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i]!;
+    const badge = q.category === "gap"
+      ? c.yellow(`[${q.dimension}]`)
+      : c.cyan(`[${q.category}]`);
+    console.log(`   ${c.gray(`${i + 1}.`)} ${badge} ${q.question}`);
+  }
+  console.log(`\n   ${c.gray("Leave any answer blank to skip. Save and close the editor when done.")}\n`);
 
-    const answer = await input({ message: gap.question });
+  // Build editor template
+  let template = "# Onboarding Questions — answer below each question (leave blank to skip)\n\n";
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i]!;
+    template += `## ${i + 1}. ${q.question}\n`;
+    if (q.context) template += `> ${q.context}\n`;
+    template += "\n\n\n";
+  }
 
-    if (!answer.trim()) continue;
+  const result = await editor({
+    message: "Answer onboarding questions (save & close when done)",
+    default: template,
+    postfix: ".md",
+  });
 
-    if (gap.dimension === "Project Identity") {
-      answers.projectDescription = answer.trim();
-    } else if (gap.dimension === "Build & Run") {
-      answers.buildCommands = answer.split(";").map((s) => s.trim()).filter(Boolean);
-    } else if (gap.dimension === "Architecture") {
-      answers.architectureNotes = (answers.architectureNotes ? answers.architectureNotes + "\n" : "") + answer.trim();
-    } else if (gap.dimension === "Code Patterns") {
-      answers.codePatterns = answer.split(";").map((s) => s.trim()).filter(Boolean);
-    } else if (gap.dimension === "Domain Context") {
-      answers.domainContext = answer.split(";").map((s) => s.trim()).filter(Boolean);
-    } else if (gap.dimension === "Testing") {
-      answers.testingNotes = answer.trim();
+  // Parse answers from ## N. headers
+  const sections = result.split(/^## \d+\./m).slice(1); // skip preamble
+  for (let i = 0; i < Math.min(sections.length, questions.length); i++) {
+    const q = questions[i]!;
+    const section = sections[i]!;
+    // First line is the question text, then > context lines, then blank, then user's answer
+    const lines = section.split("\n");
+    const answerLines: string[] = [];
+    let inHeader = true;
+    for (const line of lines) {
+      if (inHeader) {
+        // Skip question text line, > context lines, and blanks before answer
+        if (line.startsWith(">") || line.trim() === "") continue;
+        // First non-empty non-> line: check if it looks like the question (contains ?)
+        if (line.includes("?") && answerLines.length === 0) continue;
+        inHeader = false;
+      }
+      answerLines.push(line);
+    }
+    const answer = answerLines.join("\n").trim();
+    if (!answer) continue;
+
+    // Route answer to the right field
+    if (q.category === "gap") {
+      if (q.dimension === "Project Identity") {
+        answers.projectDescription = answer;
+      } else if (q.dimension === "Build & Run") {
+        answers.buildCommands = answer.split(";").map((s) => s.trim()).filter(Boolean);
+      } else if (q.dimension === "Architecture") {
+        answers.architectureNotes = (answers.architectureNotes ? answers.architectureNotes + "\n" : "") + answer;
+      } else if (q.dimension === "Code Patterns") {
+        answers.codePatterns = answer.split(";").map((s) => s.trim()).filter(Boolean);
+      } else if (q.dimension === "Domain Context") {
+        answers.domainContext = answer.split(";").map((s) => s.trim()).filter(Boolean);
+      } else if (q.dimension === "Testing") {
+        answers.testingNotes = answer;
+      }
+    } else {
+      // Domain Q&A — store in domainQA array
+      if (!answers.domainQA) answers.domainQA = [];
+      answers.domainQA.push({ question: q.question, answer });
     }
   }
 
@@ -212,6 +267,7 @@ program
         maxPRs: parseInt(opts.maxPrs as string, 10),
         forceRegenerate: Boolean(opts.force),
         verbose: Boolean(opts.verbose),
+        tier: AnalysisTier.Two,
       };
       if (opts.githubRepo) options.githubRepo = opts.githubRepo as string;
 
@@ -318,29 +374,28 @@ program
       let score = hasNewContent(answers) ? computeConfidenceWithAnswers(baseScore, answers) : baseScore;
       displayConfidenceScore(score, c);
 
-      if (interactive && score.total < threshold && score.gaps.length > 0) {
+      if (interactive && score.total < threshold) {
         const { confirm } = await import("@inquirer/prompts");
 
         let round = 1;
         const MAX_ROUNDS = 5;
 
-        while (score.total < threshold && score.gaps.length > 0 && round <= MAX_ROUNDS) {
-          const actionableGaps = score.gaps.filter((g) => g.impact === "high" || g.impact === "medium");
-          if (actionableGaps.length === 0) break;
+        while (score.total < threshold && round <= MAX_ROUNDS) {
+          // Generate smart questions based on current gaps (re-evaluated each round)
+          const smartQuestions = analyzer.generateSmartQuestions(analysis, score.gaps, answers);
+          if (smartQuestions.length === 0) break;
 
           if (round === 1) {
             console.log(
               `   ${c.yellow(`Score ${score.total} is below target ${threshold}.`)} Let's fill the gaps.\n`,
             );
-            console.log(`   ${c.gray("Press Enter to skip any question you can't answer right now.")}`);
           } else {
             console.log(
-              `\n   ${c.yellow(`Round ${round}:`)} Score is ${score.total}/${threshold} — ${actionableGaps.length} gap${actionableGaps.length > 1 ? "s" : ""} remaining.`,
+              `\n   ${c.yellow(`Round ${round}:`)} Score is ${score.total}/${threshold} — ${smartQuestions.length} question${smartQuestions.length > 1 ? "s" : ""} remaining.`,
             );
           }
 
-          // Prompt user for this round's gaps
-          const newAnswers = await promptForGaps(actionableGaps, answers, c);
+          const newAnswers = await promptForGaps(smartQuestions, answers, c);
 
           // Check if user provided anything new
           const answeredSomething =
@@ -349,7 +404,8 @@ program
             newAnswers.architectureNotes !== answers.architectureNotes ||
             newAnswers.codePatterns !== answers.codePatterns ||
             newAnswers.domainContext !== answers.domainContext ||
-            newAnswers.testingNotes !== answers.testingNotes;
+            newAnswers.testingNotes !== answers.testingNotes ||
+            (newAnswers.domainQA?.length ?? 0) > (answers.domainQA?.length ?? 0);
 
           if (!answeredSomething) {
             console.log(`\n   ${c.gray("No new answers provided. Finishing up.")}`);
@@ -375,9 +431,9 @@ program
           }
 
           // Ask if user wants to continue
-          if (score.gaps.length > 0 && round < MAX_ROUNDS) {
+          if (round < MAX_ROUNDS) {
             const keepGoing = await confirm({
-              message: `${score.gaps.length} gap${score.gaps.length > 1 ? "s" : ""} remaining. Continue improving?`,
+              message: `Score is ${score.total}/${threshold}. Continue improving?`,
               default: true,
             });
             if (!keepGoing) break;
@@ -418,16 +474,31 @@ program
         maxPRs: 0,
         forceRegenerate: false,
         verbose: false,
+        tier: AnalysisTier.Two,
       });
 
-      const analysis = await analyzer.analyze();
-      const existingAnswers = loadAnswers(repoPath) ?? undefined;
-      const docGen = new DocumentGenerator(repoPath, analysis, existingAnswers);
-      const updateOpts: { repoPath: string; sinceCommit?: string; mode: "commit" | "merge" | "rebase" | "manual" } = {
+      // Try incremental first (uses snapshot + delta since last SHA)
+      const updateOpts: UpdateOptions = {
         repoPath,
         mode: (opts.mode as "commit" | "merge" | "rebase" | "manual") ?? "manual",
       };
       if (opts.since) updateOpts.sinceCommit = opts.since as string;
+
+      const result = await analyzer.analyzeIncremental(updateOpts);
+
+      if (!result) {
+        console.log("No changes since last analysis. Documentation is up to date.");
+        return;
+      }
+
+      if (result.incremental) {
+        console.log("Incremental update: merged delta into snapshot.");
+      } else {
+        console.log("No snapshot found — ran full analysis.");
+      }
+
+      const existingAnswers = loadAnswers(repoPath) ?? undefined;
+      const docGen = new DocumentGenerator(repoPath, result.analysis, existingAnswers);
       const files = await docGen.updateIncremental(updateOpts);
       const updated = files.filter((f: GeneratedFile) => f.action !== "skipped");
       console.log(`Updated ${updated.length} files.`);

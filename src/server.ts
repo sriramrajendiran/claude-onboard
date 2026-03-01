@@ -5,6 +5,7 @@ import { DocumentGenerator } from "./generators/documents.js";
 import { HookInstaller } from "./hooks/installer.js";
 import { GitHubClient } from "./analyzers/github.js";
 import { join } from "node:path";
+import { AnalysisTier } from "./types.js";
 import type { OnboardResult } from "./types.js";
 
 export function createServer(): McpServer {
@@ -41,8 +42,17 @@ export function createServer(): McpServer {
         .boolean()
         .default(false)
         .describe("Force regenerate all files"),
+      tier: z
+        .number()
+        .int()
+        .min(0)
+        .max(3)
+        .default(2)
+        .describe(
+          "Analysis depth: 0=metadata, 1=fast, 2=deep (default), 3=with PRs",
+        ),
     },
-    async ({ repo_path, github_repo, max_commits, max_prs, force_regenerate }) => {
+    async ({ repo_path, github_repo, max_commits, max_prs, force_regenerate, tier }) => {
       try {
         const opts: import("./types.js").OnboardOptions = {
           repoPath: repo_path,
@@ -50,6 +60,7 @@ export function createServer(): McpServer {
           maxPRs: max_prs,
           forceRegenerate: force_regenerate,
           verbose: false,
+          tier: tier as AnalysisTier,
         };
         if (github_repo) opts.githubRepo = github_repo;
         const analyzer = new RepositoryAnalyzer(opts);
@@ -134,10 +145,9 @@ export function createServer(): McpServer {
           maxPRs: 0,
           forceRegenerate: false,
           verbose: false,
+          tier: AnalysisTier.Two,
         });
 
-        const analysis = await analyzer.analyze();
-        const docGen = new DocumentGenerator(repo_path, analysis);
         const updateOpts = { repoPath: repo_path, mode } as {
           repoPath: string;
           sinceCommit?: string;
@@ -147,6 +157,14 @@ export function createServer(): McpServer {
         if (since_commit) updateOpts.sinceCommit = since_commit;
         if (changed_files) updateOpts.changedFiles = changed_files;
 
+        const result = await analyzer.analyzeIncremental(updateOpts);
+        if (!result) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({ success: true, updatedFiles: 0, message: "No changes since last analysis." }, null, 2) }],
+          };
+        }
+
+        const docGen = new DocumentGenerator(repo_path, result.analysis);
         const files = await docGen.updateIncremental(updateOpts);
 
         return {

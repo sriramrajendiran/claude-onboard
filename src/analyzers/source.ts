@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname, extname, basename } from "node:path";
-import { GitReader } from "./git.js";
+import type { Commit } from "../types.js";
 
 /**
  * Represents a directory "module" in the codebase with its purpose and key files.
@@ -131,12 +131,13 @@ export class SourceAnalyzer {
   private readonly repoPath: string;
   private readonly files: string[];
   private readonly changeFreq: Map<string, number>;
+  private readonly commits: Commit[];
 
-  constructor(repoPath: string, changeFreq: Map<string, number>) {
+  constructor(repoPath: string, changeFreq: Map<string, number>, commits: Commit[], trackedFiles: string[]) {
     this.repoPath = repoPath;
-    const git = new GitReader(repoPath);
-    this.files = git.isGitRepo() ? git.getTrackedFiles() : [];
+    this.files = trackedFiles;
     this.changeFreq = changeFreq;
+    this.commits = commits;
   }
 
   analyze(): SourceAnalysis {
@@ -416,6 +417,12 @@ export class SourceAnalyzer {
           types.push(...this.parseJavaTypes(file, lines, loc));
         } else if (ext === ".ts" || ext === ".tsx") {
           types.push(...this.parseTsTypes(file, lines, loc));
+        } else if (ext === ".py") {
+          types.push(...this.extractPythonTypes(content, file));
+        } else if (ext === ".go") {
+          types.push(...this.extractGoTypes(content, file));
+        } else if (ext === ".rs") {
+          types.push(...this.extractRustTypes(content, file));
         }
       } catch {
         // skip
@@ -520,6 +527,61 @@ export class SourceAnalyzer {
       }
     }
 
+    return types;
+  }
+
+  private extractPythonTypes(content: string, file: string): KeyType[] {
+    const types: KeyType[] = [];
+    const classRe = /^class\s+(\w+)(?:\s*\(([^)]*)\))?:/gm;
+    let m: RegExpExecArray | null;
+    while ((m = classRe.exec(content)) !== null) {
+      const name = m[1] ?? "";
+      if (!name) continue;
+      const bases = m[2] ? m[2].split(",").map((b) => b.trim()).filter(Boolean) : [];
+      const isDataclass = content.slice(Math.max(0, m.index - 100), m.index).includes("@dataclass");
+      const annotations = isDataclass ? ["@dataclass"] : [];
+      types.push({
+        name,
+        file,
+        kind: "class",
+        superTypes: bases,
+        annotations,
+        linesOfCode: 0,
+        description: this.inferTypeDescription(name),
+      });
+    }
+    return types;
+  }
+
+  private extractGoTypes(content: string, file: string): KeyType[] {
+    const types: KeyType[] = [];
+    const structRe = /^type\s+(\w+)\s+struct\s*\{/gm;
+    const ifaceRe = /^type\s+(\w+)\s+interface\s*\{/gm;
+    let m: RegExpExecArray | null;
+    while ((m = structRe.exec(content)) !== null) {
+      if (m[1]) types.push({ name: m[1], file, kind: "struct", superTypes: [], annotations: [], linesOfCode: 0, description: this.inferTypeDescription(m[1]) });
+    }
+    while ((m = ifaceRe.exec(content)) !== null) {
+      if (m[1]) types.push({ name: m[1], file, kind: "interface", superTypes: [], annotations: [], linesOfCode: 0, description: this.inferTypeDescription(m[1]) });
+    }
+    return types;
+  }
+
+  private extractRustTypes(content: string, file: string): KeyType[] {
+    const types: KeyType[] = [];
+    const structRe = /^(?:pub\s+)?struct\s+(\w+)/gm;
+    const traitRe = /^(?:pub\s+)?trait\s+(\w+)/gm;
+    const enumRe = /^(?:pub\s+)?enum\s+(\w+)/gm;
+    let m: RegExpExecArray | null;
+    while ((m = structRe.exec(content)) !== null) {
+      if (m[1]) types.push({ name: m[1], file, kind: "struct", superTypes: [], annotations: [], linesOfCode: 0, description: this.inferTypeDescription(m[1]) });
+    }
+    while ((m = traitRe.exec(content)) !== null) {
+      if (m[1]) types.push({ name: m[1], file, kind: "trait", superTypes: [], annotations: [], linesOfCode: 0, description: this.inferTypeDescription(m[1]) });
+    }
+    while ((m = enumRe.exec(content)) !== null) {
+      if (m[1]) types.push({ name: m[1], file, kind: "enum", superTypes: [], annotations: [], linesOfCode: 0, description: this.inferTypeDescription(m[1]) });
+    }
     return types;
   }
 
@@ -1059,12 +1121,10 @@ export class SourceAnalyzer {
   }
 
   private analyzeCommitPatterns(): CommitPatternInsight {
-    const git = new GitReader(this.repoPath);
-    if (!git.isGitRepo()) {
+    const commits = this.commits.slice(0, 200);
+    if (commits.length === 0) {
       return { style: "unknown", branchPattern: "", exampleMessages: [], mergeStrategy: "unknown", avgCommitsPerPR: 0 };
     }
-
-    const commits = git.getCommits({ limit: 200, skipMerges: false });
     const nonMerge = commits.filter((c) => !c.isMerge);
     const mergeCommits = commits.filter((c) => c.isMerge);
 
