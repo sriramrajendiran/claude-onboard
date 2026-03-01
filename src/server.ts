@@ -78,8 +78,8 @@ export function createServer(): McpServer {
           repoPath: repo_path,
           generatedFiles: files,
           installedHooks: hooks,
-          builtSkills: files
-            .filter((f) => f.path.includes("skills/"))
+          builtAgents: files
+            .filter((f) => f.path.includes("agents/"))
             .map((f) => f.path),
           analysis: {
             commitsAnalyzed: analysis.commits.length,

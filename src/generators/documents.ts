@@ -3,6 +3,7 @@ import {
   readFileSync,
   writeFileSync,
   mkdirSync,
+  rmSync,
   statSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
@@ -31,7 +32,7 @@ import {
 } from "./templates.js";
 import { GitReader } from "../analyzers/git.js";
 import type { AnalysisSnapshot } from "../types.js";
-import { SkillBuilder } from "./skills.js";
+import { AgentBuilder } from "./agents.js";
 
 export class DocumentGenerator {
   constructor(
@@ -88,11 +89,17 @@ export class DocumentGenerator {
       files.push(this.smartWrite(path, content, force));
     }
 
-    // Skills
-    const skillBuilder = new SkillBuilder(this.repoPath, this.analysis);
-    const skillFiles = await skillBuilder.buildAll();
-    for (const sf of skillFiles) {
-      files.push(this.smartWrite(sf.path, sf.content, force));
+    // Clean up legacy skills directory
+    const skillsDir = join(this.repoPath, ".claude", "skills");
+    if (existsSync(skillsDir)) {
+      rmSync(skillsDir, { recursive: true, force: true });
+    }
+
+    // Agents
+    const agentBuilder = new AgentBuilder(this.repoPath, this.analysis);
+    const agentFiles = await agentBuilder.buildAll();
+    for (const af of agentFiles) {
+      files.push(this.smartWrite(af.path, af.content, force));
     }
 
     // Folder-level CLAUDE.md for progressive context disclosure

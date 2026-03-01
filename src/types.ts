@@ -161,7 +161,7 @@ export interface OnboardResult {
   repoPath: string;
   generatedFiles: GeneratedFile[];
   installedHooks: string[];
-  builtSkills: string[];
+  builtAgents: string[];
   analysis: {
     commitsAnalyzed: number;
     contributors: number;

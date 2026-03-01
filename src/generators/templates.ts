@@ -242,6 +242,17 @@ export function renderClaudeMd(analysis: RepositoryAnalysis, humanAnswers?: Huma
     lines.push("");
   }
 
+  // ── Agents ──
+  lines.push("## Agents", "");
+  lines.push("Specialized agents are available in `.claude/agents/`. Use them for autonomous, delegated work:", "");
+  lines.push("- **reviewer** — Spawn when reviewing PRs or code changes. Knows this repo's conventions, critical paths, and co-change coupling.");
+  if (analysis.testFrameworks.length > 0) {
+    lines.push("- **test-writer** — Spawn when writing or updating tests. Knows the test framework, structure, and patterns.");
+  }
+  lines.push("- **doc-maintainer** — Spawn after significant code changes to update documentation. Knows the auto-marker system.");
+  lines.push("- **security-auditor** — Spawn for security reviews. Knows this repo's tech stack and attack surface.");
+  lines.push("");
+
   // ── Folder-level CLAUDE.md pointers ──
   if (sa && sa.hotpathDirs.length > 0) {
     lines.push("## Folder Context", "");
@@ -758,4 +769,578 @@ To answer, first read \`.claude/CLAUDE.md\` for project context.
 Then check folder-level \`CLAUDE.md\` files in relevant source directories.
 If the docs don't cover the question, explore the codebase directly.
 `;
+}
+
+// ── Agent render functions ───────────────────────────────────────────────────
+
+interface AgentFrontmatter {
+  name: string;
+  description: string;
+  tools: string[];
+  model?: string;
+  permissionMode?: string;
+  maxTurns?: number;
+  memory?: string;
+  isolation?: string;
+}
+
+function agentFrontmatter(opts: AgentFrontmatter): string {
+  const lines = [
+    "---",
+    `name: ${opts.name}`,
+    `description: "${opts.description}"`,
+    `tools: ${opts.tools.join(", ")}`,
+  ];
+  if (opts.model) lines.push(`model: ${opts.model}`);
+  if (opts.permissionMode) lines.push(`permissionMode: ${opts.permissionMode}`);
+  if (opts.maxTurns) lines.push(`maxTurns: ${opts.maxTurns}`);
+  if (opts.memory) lines.push(`memory: ${opts.memory}`);
+  if (opts.isolation) lines.push(`isolation: ${opts.isolation}`);
+  lines.push("---");
+  return lines.join("\n");
+}
+
+function agentBody(sections: string[]): string {
+  return [
+    "",
+    AUTO_START,
+    "",
+    ...sections,
+    "",
+    AUTO_END,
+    "",
+  ].join("\n");
+}
+
+export function renderReviewerAgent(analysis: RepositoryAnalysis): string {
+  const sa = analysis.sourceAnalysis;
+  const sections: string[] = [
+    `# Code Reviewer — ${analysis.repoName}`,
+    "",
+    `You are a code reviewer with deep knowledge of this repository's conventions, architecture, and critical paths.`,
+    "",
+    "## Architecture",
+    "",
+    `- **Style**: ${analysis.architecture.style}`,
+  ];
+
+  if (analysis.architecture.layers.length > 0) {
+    sections.push(`- **Layers**: ${analysis.architecture.layers.join(" → ")}`);
+  }
+
+  // Conventions
+  if (analysis.conventions.length > 0) {
+    sections.push("", "## Conventions", "");
+    for (const c of analysis.conventions) {
+      sections.push(`- **${c.type}**: ${c.description}`);
+      if (c.examples.length > 0) {
+        sections.push(`  - Pattern: \`${c.examples[0]}\``);
+      }
+    }
+    if (sa?.commitPatterns?.branchPattern) {
+      sections.push(`- **branches**: ${sa.commitPatterns.branchPattern}`);
+    }
+  }
+
+  // Critical paths
+  if (analysis.criticalPaths.length > 0) {
+    sections.push("", "## Critical Paths (high change frequency)", "");
+    sections.push("Extra scrutiny required when these files are touched:", "");
+    for (const p of analysis.criticalPaths.slice(0, 10)) {
+      sections.push(`- \`${p.path}\` (${p.changeCount} changes)`);
+    }
+  }
+
+  // Co-change pairs
+  if (analysis.coChangePairs && analysis.coChangePairs.length > 0) {
+    sections.push("", "## Co-change Coupling", "");
+    sections.push("If one file in a pair is changed, check the other:", "");
+    for (const pair of analysis.coChangePairs.slice(0, 10)) {
+      const pct = Math.round(pair.strength * 100);
+      sections.push(`- \`${pair.fileA}\` ↔ \`${pair.fileB}\` (${pct}% coupling)`);
+    }
+  }
+
+  // Key types
+  if (sa && sa.keyTypes.length > 0) {
+    sections.push("", "## Key Types", "");
+    for (const t of sa.keyTypes.slice(0, 10)) {
+      const desc = t.description ? ` — ${t.description}` : "";
+      sections.push(`- **${t.name}** \`${t.file}\` (${t.linesOfCode} LOC)${desc}`);
+    }
+  }
+
+  // Load-bearing modules
+  if (analysis.importGraph && analysis.importGraph.topByFanIn.length > 0) {
+    sections.push("", "## Load-bearing Modules", "");
+    sections.push("Changes here have wide blast radius:", "");
+    for (const { file, fanIn } of analysis.importGraph.topByFanIn.slice(0, 8)) {
+      sections.push(`- \`${file}\` — imported by ${fanIn} files`);
+    }
+  }
+
+  sections.push(
+    "",
+    "## How to Get the Diff",
+    "",
+    "Determine what to review based on how you were invoked:",
+    "- If given a PR number: `gh pr diff <number>`",
+    "- If on a feature branch: `git diff $(git merge-base HEAD " + analysis.defaultBranch + ")..HEAD`",
+    "- If reviewing staged changes: `git diff --cached`",
+    "- If no context given: `git diff HEAD~1` for the last commit",
+    "",
+    "## Review Process",
+    "",
+    "### Step 1: Understand the change",
+    "Read the full diff. Summarize WHAT changed and WHY (infer from commit messages, PR description, or code context).",
+    "",
+    "### Step 2: Check conventions",
+    "Cross-reference every changed file against the conventions listed above. Flag deviations with the specific convention violated.",
+    "",
+    "### Step 3: Critical path analysis",
+    "If ANY file in the Critical Paths list above is modified:",
+    "- Verify the change has test coverage",
+    "- Check if the change could affect downstream consumers",
+    "- Flag if the change modifies a public API or interface",
+    "",
+    "### Step 4: Co-change validation",
+    "For every changed file, check if it appears in a co-change pair above. If its pair is NOT in the diff, flag it as: \"Warning: `fileA` was changed but its co-change partner `fileB` was not. These files are modified together " + "N% of the time — verify this is intentional.\"",
+    "",
+    "### Step 5: Blast radius check",
+    "If any load-bearing module (high fan-in) is modified, search for all importers using `Grep` and assess whether the change is backward-compatible.",
+    "",
+    "### Step 6: Read code patterns",
+    "Read `.claude/context/patterns.md` and verify new code follows established patterns.",
+    "",
+    "## Output Format",
+    "",
+    "Structure your review as:",
+    "```",
+    "## Summary",
+    "(1-2 sentence description of the change)",
+    "",
+    "## Risk Assessment: LOW | MEDIUM | HIGH | CRITICAL",
+    "(Based on: critical paths touched, blast radius, complexity)",
+    "",
+    "## Findings",
+    "### [SEVERITY] Finding title",
+    "- **File**: `path/to/file.ext:line`",
+    "- **Issue**: What's wrong",
+    "- **Suggestion**: How to fix it",
+    "",
+    "## Co-change Warnings",
+    "(Any missed co-change partners)",
+    "",
+    "## Verdict: APPROVE | REQUEST_CHANGES | NEEDS_DISCUSSION",
+    "```",
+  );
+
+  return agentFrontmatter({
+    name: "reviewer",
+    description: "Code reviewer with deep knowledge of this repo's conventions and critical paths",
+    tools: ["Read", "Glob", "Grep", "Bash"],
+    model: "sonnet",
+    permissionMode: "plan",
+    maxTurns: 20,
+    isolation: "worktree",
+  }) + agentBody(sections);
+}
+
+export function renderTestWriterAgent(analysis: RepositoryAnalysis): string {
+  const sa = analysis.sourceAnalysis;
+  const sections: string[] = [
+    `# Test Writer — ${analysis.repoName}`,
+    "",
+    `You write tests that match this repository's exact testing patterns and conventions.`,
+    "",
+    "## Test Stack",
+    "",
+    `- **Frameworks**: ${analysis.testFrameworks.join(", ")}`,
+    `- **Test structure**: ${analysis.architecture.testStructure}`,
+    `- **Coverage level**: ${analysis.testCoverage}`,
+  ];
+
+  // Build commands for running tests
+  if (sa) {
+    const testCmds = sa.buildCommands.filter(
+      (cmd) => cmd.name.includes("test") || cmd.command.includes("test"),
+    );
+    if (testCmds.length > 0) {
+      sections.push("", "## Test Commands", "");
+      for (const cmd of testCmds) {
+        sections.push(`- \`${cmd.command}\``);
+      }
+    }
+  }
+
+  // Code patterns related to testing
+  if (sa?.codePatterns) {
+    const testPatterns = sa.codePatterns.filter(
+      (p) => p.name.toLowerCase().includes("test") || p.description.toLowerCase().includes("test"),
+    );
+    if (testPatterns.length > 0) {
+      sections.push("", "## Test Patterns in This Repo", "");
+      for (const p of testPatterns) {
+        sections.push(`### ${p.name}`, "", p.description, "");
+      }
+    }
+  }
+
+  sections.push(
+    "",
+    "## Process",
+    "",
+    "### Step 1: Understand the target",
+    "Read the source file you are writing tests for. Understand its public API, dependencies, and edge cases.",
+    "",
+    "### Step 2: Find existing test examples",
+    `Use \`Glob\` to find existing test files (patterns: \`**/*.test.*\`, \`**/*.spec.*\`, \`**/test_*\`, \`**/*Test.java\`). Read 2-3 examples to understand:`,
+    "- Import style and test setup patterns",
+    "- How mocks/stubs are created",
+    "- Assertion style (expect vs assert vs assertThat)",
+    "- Test naming conventions (describe/it, should-style, method_condition_expected)",
+    "- Setup/teardown patterns (beforeEach, @BeforeEach, setUp)",
+    "",
+    "### Step 3: Write tests",
+    `Place tests ${analysis.architecture.testStructure === "colocated" ? "next to the source file" : "in the corresponding test directory, mirroring the source path"}.`,
+    "",
+    "For each public method/function, write:",
+    "- **Happy path**: Normal input, expected output",
+    "- **Edge cases**: Empty input, null/undefined, boundary values",
+    "- **Error cases**: Invalid input, expected exceptions",
+    "- **Integration points**: If the function calls external services, test with mocks",
+    "",
+    "### Step 4: Verify",
+    "Run the test suite to ensure all new tests pass and no existing tests break.",
+    analysis.testFrameworks.length > 0
+      ? `Use the test framework: ${analysis.testFrameworks.join(", ")}`
+      : "",
+    "",
+    "## Output Format",
+    "",
+    "After writing tests, report:",
+    "```",
+    "## Tests Written",
+    "- `path/to/test/file`: N tests (N pass, N fail)",
+    "",
+    "## Coverage",
+    "- Methods covered: list",
+    "- Edge cases covered: list",
+    "- Not covered (and why): list",
+    "```",
+  );
+
+  return agentFrontmatter({
+    name: "test-writer",
+    description: "Test writer that generates tests matching this repo's exact testing patterns",
+    tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
+    model: "sonnet",
+    maxTurns: 20,
+  }) + agentBody(sections);
+}
+
+export function renderDocMaintainerAgent(analysis: RepositoryAnalysis): string {
+  const sa = analysis.sourceAnalysis;
+  const sections: string[] = [
+    `# Documentation Maintainer — ${analysis.repoName}`,
+    "",
+    "You maintain the onboarding documentation for this repository. You understand the auto-marker system and know which files are auto-generated vs manually maintained.",
+    "",
+    "## Auto-Marker System",
+    "",
+    "Files use markers to separate auto-generated and manual content:",
+    "```",
+    "<!-- onboarder:auto-start -->",
+    "(auto-generated content — will be overwritten on regeneration)",
+    "<!-- onboarder:auto-end -->",
+    "```",
+    "Content OUTSIDE these markers is preserved during regeneration. Content INSIDE is replaced.",
+    "",
+    "## Managed Files",
+    "",
+    "**Auto-marker files** (auto section regenerated, manual sections preserved):",
+    "- `.claude/CLAUDE.md` — main project documentation",
+  ];
+
+  if (sa && sa.hotpathDirs.length > 0) {
+    for (const dir of sa.hotpathDirs) {
+      sections.push(`- \`${dir}/CLAUDE.md\` — folder-level context`);
+    }
+  }
+
+  sections.push(
+    "",
+    "**Write-once files** (never overwritten after creation unless forced):",
+    "- `.claude/context/architecture.md`",
+    "- `.claude/context/patterns.md`",
+    "- `.claude/context/hotfiles.md`",
+    "- `.claude/commands/*.md` — all command files",
+    "- `.claude/agents/*.md` — all agent files (outside auto-markers)",
+    "",
+    "**Data files** (always overwritten):",
+    "- `.claude/.onboard-snapshot.json`",
+    "- `.claude/.onboarder-meta.json`",
+    "",
+    "## Staleness Detection",
+    "",
+    "To determine if docs need updating:",
+    "1. Read `.claude/.onboarder-meta.json` to get `lastUpdated` timestamp",
+    "2. Run `git log --oneline --since=\"<lastUpdated>\"` to count commits since last update",
+    "3. Docs are **stale** if any of these are true:",
+    "   - More than 20 commits since last update",
+    "   - New directories exist under `src/` that don't have folder-level CLAUDE.md files",
+    "   - `package.json` (or equivalent build file) has changed since last update",
+    "   - New frameworks or major dependencies were added",
+    "",
+    "## Update Process",
+    "",
+    "### For auto-marker files:",
+    "Run `npx claude-onboard update` to regenerate auto sections. This is always safe — manual content outside markers is preserved.",
+    "",
+    "### For write-once files (context/, commands/, agents/):",
+    "These require manual updates. When updating:",
+    "",
+    "1. **architecture.md** — Update if new modules, layers, or services were added. Check `git log --stat` for new directories.",
+    "2. **patterns.md** — Update if new code patterns or conventions emerged. Look at recent PRs for new idioms.",
+    "3. **hotfiles.md** — Update if critical paths shifted. Run `git log --name-only --since=\"<date>\" | sort | uniq -c | sort -rn` to find new hot files.",
+    "",
+    "### For folder-level CLAUDE.md:",
+    "If a new directory appears under a hotpath that doesn't have a CLAUDE.md, create one with:",
+    "- Brief description of what the directory contains",
+    "- Key types and their purpose",
+    "- Hot files in that directory",
+    "",
+    "## Writing Style",
+    "",
+    "- Be concise. Claude reads these files at the start of every conversation — every line costs context.",
+    "- Focus on WHAT and WHY, not HOW. Claude can read the code for implementation details.",
+    "- Prioritize information Claude can't easily grep for: architectural decisions, domain concepts, non-obvious conventions.",
+    "- Never duplicate information that's already in the auto-generated sections.",
+  );
+
+  return agentFrontmatter({
+    name: "doc-maintainer",
+    description: "Documentation maintainer that knows this repo's doc structure and auto-marker system",
+    tools: ["Read", "Write", "Edit", "Glob", "Grep"],
+    model: "sonnet",
+    memory: "project",
+    maxTurns: 15,
+  }) + agentBody(sections);
+}
+
+export function renderSecurityAuditorAgent(analysis: RepositoryAnalysis): string {
+  const sa = analysis.sourceAnalysis;
+  const arch = analysis.architecture;
+  const sections: string[] = [
+    `# Security Auditor — ${analysis.repoName}`,
+    "",
+    "You audit this repository for security vulnerabilities specific to its tech stack.",
+    "",
+    "## Tech Stack",
+    "",
+    `- **Language**: ${analysis.primaryLanguage}`,
+    `- **Frameworks**: ${analysis.frameworks.join(", ") || "None detected"}`,
+  ];
+
+  // Dependencies by group
+  if (sa) {
+    const depGroups = groupBy(sa.dependencies, (d) => d.group);
+    if (depGroups.size > 0) {
+      sections.push("", "## Dependencies by Category", "");
+      for (const [group, deps] of depGroups) {
+        if (group === "other" || group === "code-gen" || group === "logging") continue;
+        const names = deps.map((d) => d.name.split(":").pop()!).slice(0, 8).join(", ");
+        sections.push(`- **${group}**: ${names}`);
+      }
+    }
+  }
+
+  // Database patterns
+  if (arch.databasePatterns.length > 0) {
+    sections.push("", "## Database Patterns", "");
+    for (const p of arch.databasePatterns) {
+      sections.push(`- ${p}`);
+    }
+  }
+
+  // API patterns
+  if (arch.apiPatterns.length > 0) {
+    sections.push("", "## API Patterns", "");
+    for (const p of arch.apiPatterns) {
+      sections.push(`- ${p}`);
+    }
+  }
+
+  // Entry points
+  if (arch.entryPoints.length > 0) {
+    sections.push("", "## Entry Points", "");
+    for (const ep of arch.entryPoints) {
+      sections.push(`- \`${ep}\``);
+    }
+  }
+
+  // Framework-specific audit guidance
+  const frameworks = analysis.frameworks.map((f) => f.toLowerCase());
+  const hasSpring = frameworks.some((f) => f.includes("spring"));
+  const hasDjango = frameworks.some((f) => f.includes("django"));
+  const hasExpress = frameworks.some((f) => f.includes("express"));
+  const hasNextjs = frameworks.some((f) => f.includes("next"));
+  const hasFastAPI = frameworks.some((f) => f.includes("fastapi"));
+
+  sections.push(
+    "",
+    "## Audit Process",
+    "",
+    "### Step 1: Map the attack surface",
+    "Use `Grep` to find all entry points:",
+  );
+
+  if (hasSpring) {
+    sections.push(
+      "- `@RequestMapping`, `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping` — REST endpoints",
+      "- `@Controller`, `@RestController` — controller classes",
+      "- `@Scheduled` — scheduled tasks (can they be triggered externally?)",
+      "- `@EventListener` — event handlers",
+    );
+  } else if (hasExpress) {
+    sections.push(
+      "- `app.get`, `app.post`, `app.put`, `app.delete`, `router.get`, etc. — route handlers",
+      "- `app.use` — middleware registration",
+    );
+  } else if (hasDjango) {
+    sections.push(
+      "- `urls.py` / `path()` / `re_path()` — URL routing",
+      "- `views.py` — view functions/classes",
+      "- `@api_view` / `ViewSet` — DRF endpoints",
+    );
+  } else if (hasFastAPI) {
+    sections.push(
+      "- `@app.get`, `@app.post`, `@router.get`, etc. — route handlers",
+      "- `Depends()` — dependency injection (check auth dependencies)",
+    );
+  } else if (hasNextjs) {
+    sections.push(
+      "- `app/api/` or `pages/api/` — API routes",
+      "- `middleware.ts` — edge middleware",
+      "- Server actions (`'use server'`)",
+    );
+  } else {
+    sections.push(
+      `- Search for route/endpoint definitions common in ${analysis.primaryLanguage} web frameworks`,
+    );
+  }
+
+  sections.push(
+    "",
+    "### Step 2: Authentication & Authorization",
+  );
+
+  if (hasSpring) {
+    sections.push(
+      "- Check `SecurityFilterChain` / `WebSecurityConfigurerAdapter` — which endpoints are public vs protected?",
+      "- Search for `@PreAuthorize`, `@Secured`, `@RolesAllowed` — are role checks applied consistently?",
+      "- Check OAuth2/JWT config: is token validation properly configured? Are scopes enforced?",
+      "- **Actuator exposure**: search for `management.endpoints.web.exposure` — are `/actuator/env`, `/actuator/heapdump` exposed?",
+      "- Check CORS config: `@CrossOrigin` or `CorsConfigurationSource` — is it overly permissive (`allowedOrigins(\"*\")`)?",
+      "- CSRF: is CSRF disabled? If so, is it justified (stateless API with JWT)?",
+    );
+  } else if (hasExpress) {
+    sections.push(
+      "- Check middleware chain: is auth middleware applied before route handlers?",
+      "- Search for `passport`, `jwt`, `express-session` — how is auth implemented?",
+      "- CORS: check `cors()` config — is it overly permissive?",
+      "- Rate limiting: is `express-rate-limit` or equivalent applied?",
+    );
+  } else if (hasDjango) {
+    sections.push(
+      "- Check `MIDDLEWARE` in settings.py — is auth middleware present?",
+      "- Search for `@login_required`, `@permission_required`, `IsAuthenticated`",
+      "- CSRF: is `CsrfViewMiddleware` enabled? Any `@csrf_exempt` decorators?",
+    );
+  } else {
+    sections.push(
+      "- Verify all endpoints have authentication checks",
+      "- Check for authorization (role/permission) enforcement",
+      "- Look for endpoints accidentally left public",
+    );
+  }
+
+  sections.push(
+    "",
+    "### Step 3: Injection vulnerabilities",
+  );
+
+  if (hasSpring || analysis.primaryLanguage === "Java") {
+    sections.push(
+      "- **HQL/JPQL injection**: search for string concatenation in `@Query` annotations or `createQuery()` calls. Safe: `@Query(\"... WHERE x = :param\")`. Unsafe: `\"... WHERE x = \" + input`",
+      "- **Native SQL injection**: search for `nativeQuery = true` — these bypass JPA parameterization",
+      "- **SpEL injection**: search for `@Value(\"#{...}\")`, `@PreAuthorize` with user input in expressions",
+      "- **LDAP injection**: if LDAP is used, check for unescaped DN construction",
+      "- **Log injection**: search for user input directly in log statements without sanitization",
+    );
+  } else if (analysis.primaryLanguage === "Python") {
+    sections.push(
+      "- **SQL injection**: search for f-strings or `.format()` in SQL queries. Safe: parameterized queries. Unsafe: `f\"SELECT * FROM x WHERE id = {user_input}\"`",
+      "- **Template injection**: search for `render_template_string` with user input (Jinja2 SSTI)",
+      "- **Command injection**: search for `os.system`, `subprocess.call` with `shell=True`",
+    );
+  } else if (analysis.primaryLanguage === "TypeScript" || analysis.primaryLanguage === "JavaScript") {
+    sections.push(
+      "- **SQL injection**: search for template literals in SQL queries. Safe: parameterized queries (`$1`, `?`). Unsafe: `` `SELECT * FROM x WHERE id = ${input}` ``",
+      "- **XSS**: search for `dangerouslySetInnerHTML`, `innerHTML`, `document.write` with user input",
+      "- **Command injection**: search for `child_process.exec` with string concatenation",
+      "- **Prototype pollution**: search for deep merge/extend utilities with user-controlled input",
+    );
+  } else {
+    sections.push(
+      "- Check for string interpolation/concatenation in database queries",
+      "- Check for command execution with user input",
+      "- Check for template rendering with user input",
+    );
+  }
+
+  sections.push(
+    "",
+    "### Step 4: Secrets & configuration",
+    "- `Grep` for hardcoded credentials: `password`, `secret`, `api_key`, `token`, `private_key` in source files (not config templates)",
+    "- Check `.gitignore` — are `.env`, credential files, and key files excluded?",
+    "- Check if secrets are loaded from environment variables or a secrets manager vs hardcoded",
+    "",
+    "### Step 5: Data exposure",
+    "- Check error handlers: do they return stack traces or internal details to clients?",
+    "- Check logging: is sensitive data (passwords, tokens, PII) being logged?",
+    "- Check API responses: are internal fields (database IDs, internal status) leaking to clients?",
+    "",
+    "## Output Format",
+    "",
+    "Structure your audit report as:",
+    "```",
+    "## Security Audit — [repo name]",
+    "",
+    "### Attack Surface",
+    "- N endpoints found (N public, N authenticated)",
+    "",
+    "### Findings",
+    "",
+    "#### [CRITICAL|HIGH|MEDIUM|LOW] Finding title",
+    "- **File**: `path/to/file.ext:line`",
+    "- **Category**: Injection | Auth | Secrets | Data Exposure | Config",
+    "- **Issue**: Description of the vulnerability",
+    "- **Impact**: What an attacker could do",
+    "- **Fix**: Specific code change or approach",
+    "",
+    "### Summary",
+    "- Critical: N, High: N, Medium: N, Low: N",
+    "- Most urgent fix: [description]",
+    "```",
+  );
+
+  return agentFrontmatter({
+    name: "security-auditor",
+    description: "Security auditor specialized in this repo's tech stack vulnerabilities",
+    tools: ["Read", "Glob", "Grep", "Bash"],
+    model: "sonnet",
+    permissionMode: "plan",
+    maxTurns: 25,
+  }) + agentBody(sections);
 }

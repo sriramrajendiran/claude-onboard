@@ -318,7 +318,7 @@ program
       }
 
       const c = chalk!.default;
-      const skills = files.filter((f) => f.path.includes("skills/"));
+      const agents = files.filter((f) => f.path.includes("agents/"));
 
       // ── Step 3: Display results ──
       console.log(
@@ -340,7 +340,7 @@ program
       console.log(
         `${c.blue("📁")} Generated (${files.length} files)`,
       );
-      for (const f of files.filter((f) => !f.path.includes("skills/"))) {
+      for (const f of files.filter((f) => !f.path.includes("agents/"))) {
         const icon =
           f.action === "created"
             ? c.green("✓ created")
@@ -359,12 +359,12 @@ program
         console.log("");
       }
 
-      if (skills.length > 0) {
+      if (agents.length > 0) {
         console.log(
-          `${c.blue("🧠")} Skills (${skills.length} built)`,
+          `${c.blue("🤖")} Agents (${agents.length} built)`,
         );
         console.log(
-          `   ${skills.map((s) => s.path.split("/").pop()?.replace(".md", "")).join(", ")}`,
+          `   ${agents.map((a) => a.path.split("/").pop()?.replace(".md", "")).join(", ")}`,
         );
         console.log("");
       }
