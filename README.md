@@ -1,38 +1,31 @@
 # claude-onboard
 
-Auto-onboard any git repo for Claude Code with self-maintaining documentation and interactive confidence scoring.
+Auto-onboard any git repo for Claude Code with self-maintaining documentation, autonomous agents, and interactive confidence scoring.
 
 ## What it does
 
-One command analyzes your repository — git history, source code, architecture, conventions — and generates a complete `.claude/` documentation structure. If the plugin isn't confident in what it found, it asks you to fill the gaps. Git hooks keep docs fresh automatically.
+One command analyzes your repository — git history, source code, architecture, conventions — and generates a complete `.claude/` structure including repo-specific autonomous agents. If the plugin isn't confident in what it found, it asks you to fill the gaps. Git hooks keep docs fresh automatically.
 
 ```
 $ npx claude-onboard init
 
 ✅ claude-onboard complete for: my-project
 
-📊 Documentation Confidence: 70/100 (B)
-   Project Identity     20/20 ✓ (description from source, package structure, Java)
-   Build & Run           9/20 ✗ (build (inferred), test (inferred))
-   Architecture          8/20 ✗ (style: microservices, 5 services)
-   Code Patterns        12/15 ~ (2 patterns found, 52 key types)
-   Domain Context       14/15 ~ (2 team rules, 2 conventions)
-   Testing               7/10 ~ (structure: colocated, test command)
+📊 Analysis
+   Commits analyzed:  500
+   Primary language:  Java
+   Frameworks:        Spring Boot
 
-   Score 70 is below target 80. Let's fill the gaps.
-
-   [high impact] Build & Run
-   Only found 3 commands. Missing: lint.
-   ? What are the commands to lint this project? npm run lint
-
-   [medium impact] Architecture
-   No layers or entry points detected.
-   ? How is the codebase organized? API layer → service → repository → database
-
-✅ Documentation updated with your answers.
+🤖 Agents (4 built)
+   reviewer, test-writer, doc-maintainer, security-auditor
 
 📊 Documentation Confidence: 91/100 (A)
-   ...
+   Project Identity     20/20 ✓
+   Build & Run          18/20 ✓
+   Architecture         16/20 ~
+   Code Patterns        15/15 ✓
+   Domain Context       14/15 ~
+   Testing              8/10  ~
 ```
 
 ## Prerequisites
@@ -47,7 +40,7 @@ $ npx claude-onboard init
 # Checkout any repo and run:
 npx claude-onboard init
 
-# That's it. Claude Code now has full context about the codebase.
+# That's it. Claude Code now has full context and agents for the codebase.
 ```
 
 ## Installation
@@ -87,6 +80,73 @@ Add to `.claude/settings.json` or `~/.claude/settings.json`:
 }
 ```
 
+## Three-Layer Architecture
+
+claude-onboard generates three complementary layers:
+
+### Agents (`.claude/agents/`)
+
+Autonomous specialists that Claude spawns for delegated work. Each agent carries repo-specific knowledge and has framework-aware instructions.
+
+| Agent | When generated | What it does |
+|-------|---------------|-------------|
+| **reviewer** | Always | Reviews code against repo conventions, validates co-change pairs, checks blast radius on load-bearing modules |
+| **test-writer** | Test framework detected | Generates tests matching the repo's exact framework, structure, and naming patterns |
+| **doc-maintainer** | Always | Detects doc staleness, updates write-once files, has persistent project memory |
+| **security-auditor** | Always | Framework-specific vulnerability scanning (Spring: SpEL/HQL injection, actuator exposure; Express: prototype pollution; etc.) |
+
+Agent frontmatter includes `model`, `permissionMode`, `maxTurns`, `memory`, and `isolation` for precise control. CLAUDE.md tells Claude when to spawn each agent.
+
+### Commands (`.claude/commands/`)
+
+User-invoked interactive workflows accessible via slash commands:
+
+| Command | Description |
+|---------|-------------|
+| `/project:onboard` | Get oriented with the codebase |
+| `/project:status` | Check doc health and confidence |
+| `/project:update-docs` | Update docs for recent changes |
+| `/project:pr-review` | Review a PR with project context |
+| `/project:ask` | Ask questions about the repo |
+
+### Context (`.claude/context/` + `CLAUDE.md`)
+
+Shared knowledge base that agents, commands, and Claude conversations all reference:
+
+- `CLAUDE.md` — project identity, commands, architecture, conventions, key types, critical paths, agents
+- `context/architecture.md` — detailed architecture breakdown
+- `context/patterns.md` — code patterns, conventions, team rules
+- `context/hotfiles.md` — critical paths, co-change pairs, load-bearing modules
+
+## Generated File Structure
+
+```
+.claude/
+├── CLAUDE.md                    # Main context file (everything Claude needs)
+├── .onboarder-meta.json         # Generation metadata
+├── .onboard-answers.json        # Human answers (persisted)
+├── agents/
+│   ├── reviewer.md              # Code review with co-change validation
+│   ├── test-writer.md           # Test generation (if test framework detected)
+│   ├── doc-maintainer.md        # Documentation maintenance with project memory
+│   └── security-auditor.md      # Framework-specific security auditing
+├── commands/
+│   ├── onboard.md               # /project:onboard
+│   ├── status.md                # /project:status
+│   ├── update-docs.md           # /project:update-docs
+│   ├── pr-review.md             # /project:pr-review
+│   └── ask.md                   # /project:ask
+├── context/
+│   ├── architecture.md          # Architecture deep-dive
+│   ├── patterns.md              # Code patterns and conventions
+│   └── hotfiles.md              # Critical paths and coupling data
+└── hooks/
+    └── update-docs.sh           # Auto-update runner
+
+src/components/CLAUDE.md         # Folder-level context (auto-generated for hot directories)
+src/api/CLAUDE.md
+```
+
 ## How Confidence Scoring Works
 
 The plugin scores its own confidence (0-100) across 6 dimensions:
@@ -109,34 +169,6 @@ When confidence is below the threshold (default 80), the plugin **automatically 
 
 The loop continues until the target score is reached, you skip all questions, or 5 rounds complete.
 
-## Generated File Structure
-
-```
-.claude/
-├── CLAUDE.md                    # Main context file (everything Claude needs)
-├── .onboarder-meta.json         # Generation metadata
-├── .onboard-answers.json        # Human answers (persisted)
-├── commands/
-│   ├── onboard.md               # /project:onboard
-│   ├── status.md                # /project:status
-│   ├── update-docs.md           # /project:update-docs
-│   ├── pr-review.md             # /project:pr-review
-│   └── ask.md                   # /project:ask
-├── skills/
-│   ├── debugging.md
-│   ├── testing.md
-│   ├── pr-workflow.md
-│   ├── code-review.md
-│   ├── refactoring.md
-│   ├── documentation.md
-│   └── [framework].md           # Per detected framework
-└── hooks/
-    └── update-docs.sh           # Auto-update runner
-
-src/components/CLAUDE.md         # Folder-level context (auto-generated for hot directories)
-src/api/CLAUDE.md
-```
-
 ## Self-Maintenance
 
 Git hooks keep docs fresh automatically:
@@ -148,6 +180,8 @@ rebase → post-rewrite hook → docs refresh
 ```
 
 Updates are throttled (max once per 5 minutes) and fail silently — they never block git operations. Human answers persist across updates.
+
+For strategic documentation updates (new modules, shifted architecture), spawn the **doc-maintainer** agent — it has persistent project memory and knows which files need manual vs automatic updates.
 
 ## CLI Reference
 
@@ -211,16 +245,6 @@ npx claude-onboard update
 | `analyze_pr` | Analyze a specific PR and update docs |
 | `check_doc_health` | Check documentation freshness and completeness |
 
-## Slash Commands
-
-| Command | Description |
-|---------|-------------|
-| `/project:onboard` | Get oriented with the codebase |
-| `/project:status` | Check doc health and confidence |
-| `/project:update-docs` | Update docs for recent changes |
-| `/project:pr-review` | Review a PR with project context |
-| `/project:ask` | Ask questions about the repo |
-
 ## Supported Ecosystems
 
 | Language | Frameworks | Build Tools | ORMs |
@@ -232,6 +256,8 @@ npx claude-onboard update
 | Rust | Actix, Axum | Cargo | Diesel |
 | Ruby | Rails | Bundler | ActiveRecord |
 | PHP | Laravel | Composer | Eloquent |
+
+Security auditor generates **framework-specific** vulnerability checks for each detected stack.
 
 ## Uninstalling
 
