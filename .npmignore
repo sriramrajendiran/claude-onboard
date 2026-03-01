@@ -1,0 +1,8 @@
+src/
+tests/
+*.ts
+tsconfig.json
+.eslintrc*
+.prettierrc*
+coverage/
+IMPLEMENTATION_PLAN.md
