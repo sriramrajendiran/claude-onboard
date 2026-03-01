@@ -10,11 +10,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/loadshare/claude-onboard.git"
+    "url": "https://github.com/sriramrajendiran/claude-onboard.git"
   },
-  "homepage": "https://github.com/loadshare/claude-onboard#readme",
+  "homepage": "https://github.com/sriramrajendiran/claude-onboard#readme",
   "bugs": {
-    "url": "https://github.com/loadshare/claude-onboard/issues"
+    "url": "https://github.com/sriramrajendiran/claude-onboard/issues"
   },
   "author": "Loadshare Networks",
   "keywords": [
