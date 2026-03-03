@@ -249,7 +249,7 @@ export function renderClaudeMd(analysis: RepositoryAnalysis, humanAnswers?: Huma
   if (analysis.testFrameworks.length > 0) {
     lines.push("- **test-writer** — Spawn when writing or updating tests. Knows the test framework, structure, and patterns.");
   }
-  lines.push("- **doc-maintainer** — Spawn after init or update. Evaluates doc quality against code, asks targeted questions, and improves coverage.");
+  lines.push("- **context-maintainer** — Spawn after init or update. Extracts context from code, git history, and developer knowledge. Populates it into the right files.");
   lines.push("- **security-auditor** — Spawn for security reviews. Knows this repo's tech stack and attack surface.");
   lines.push("");
 
@@ -717,7 +717,7 @@ First, check if \`.claude/CLAUDE.md\` exists.
 
 **If it does NOT exist (first-time setup):**
 1. Run \`npx claude-onboard init --no-interactive\` to generate baseline documentation
-2. Then spawn the **doc-maintainer** agent to evaluate documentation quality, ask targeted questions, and improve coverage until the confidence score reaches the target
+2. Then spawn the **context-maintainer** agent to evaluate documentation quality, ask targeted questions, and improve coverage until the confidence score reaches the target
 
 **If it already exists:**
 1. Read \`.claude/CLAUDE.md\` — it contains everything you need: project purpose, commands, tech stack, architecture, code patterns, conventions, and gotchas
@@ -745,16 +745,16 @@ Check the health of the onboarding documentation in this repo:
 `;
 }
 
-export function renderUpdateDocsCommand(): string {
+export function renderUpdateContextCommand(): string {
   return `---
-name: update-docs
+name: update-context
 description: Update documentation and evaluate quality
 ---
 
 Update the onboarding docs and ensure they're high quality:
 
 1. Run \`npx claude-onboard update\` to regenerate auto-sections from static analysis
-2. Spawn the **doc-maintainer** agent to evaluate documentation quality against the actual code, ask targeted questions about gaps, and improve coverage until the confidence score reaches the target
+2. Spawn the **context-maintainer** agent to evaluate documentation quality against the actual code, ask targeted questions about gaps, and improve coverage until the confidence score reaches the target
 `;
 }
 
@@ -1059,12 +1059,131 @@ export function renderTestWriterAgent(analysis: RepositoryAnalysis): string {
   }) + agentBody(sections);
 }
 
-export function renderDocMaintainerAgent(analysis: RepositoryAnalysis): string {
+export function renderContextMaintainerAgent(analysis: RepositoryAnalysis): string {
   const sa = analysis.sourceAnalysis;
   const sections: string[] = [
-    `# Documentation Maintainer — ${analysis.repoName}`,
+    `# Context Maintainer — ${analysis.repoName}`,
     "",
-    "You maintain the onboarding documentation for this repository. You understand the auto-marker system and know which files are auto-generated vs manually maintained.",
+    "You are a senior developer onboarding this repository. Your job is to extract every piece of context that would help a new team member (or Claude) be productive immediately — from source code, git history, configuration, and developer knowledge — then populate it into the right files.",
+    "",
+    "## Your Mission",
+    "",
+    "Static analysis gets you 60-70% of the way. Your job is to close the remaining gap by:",
+    "1. **Reading code** that static analysis summarized but didn't deeply understand",
+    "2. **Mining git history** for patterns, decisions, and evolution that shaped the codebase",
+    "3. **Asking the developer** targeted questions about things only humans know: business logic, deployment gotchas, tribal knowledge",
+    "4. **Populating context** into the right files so every future Claude session starts with full understanding",
+    "",
+    "## Context Extraction Playbook",
+    "",
+    "### Phase 1: Understand what's already captured",
+    "",
+    "Read the existing context files:",
+    "- `.claude/CLAUDE.md` — main project context",
+    "- `.claude/context/architecture.md` — entry points, layers, load-bearing modules",
+    "- `.claude/context/patterns.md` — code idioms, conventions, anti-patterns",
+    "- `.claude/context/hotfiles.md` — critical paths, co-change coupling",
+  ];
+
+  if (sa && sa.hotpathDirs.length > 0) {
+    sections.push("- Folder-level CLAUDE.md files (check for manual sections outside auto-markers — these contain human-provided context):");
+    for (const dir of sa.hotpathDirs) {
+      sections.push(`  - \`${dir}/CLAUDE.md\``);
+    }
+  }
+
+  sections.push(
+    "",
+    "### Phase 2: Mine the codebase for missing context",
+    "",
+    "**Git history** — the richest source of context static analysis misses:",
+    "- `git log --oneline -30` — recent trajectory and focus areas",
+    "- `git log --all --oneline --graph -20` — branching patterns, release cadence",
+    "- `git log --diff-filter=D --name-only -20` — recently deleted files (reveals refactors in progress)",
+    "- `git log --format='%s' -50 | sort | uniq -c | sort -rn` — recurring commit themes",
+    "- Look for migration commits, large refactors, and \"fix:\" patterns that reveal pain points",
+    "",
+    "**Source code** — read the files that matter most:",
+    "- Entry points (main, index, server files) — understand the application bootstrap",
+    "- Configuration files (env templates, docker-compose, CI config) — understand deployment",
+    "- The top 5 most-changed files — these are where complexity lives",
+    "- Any file with complex business logic that isn't explained in existing context",
+    "",
+    "**Project configuration** — deployment and infrastructure context:",
+    "- `Dockerfile`, `docker-compose.yml` — services, ports, dependencies",
+    "- `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile` — CI/CD pipeline",
+    "- `.env.example`, `.env.template` — required environment variables",
+    "- `Makefile`, `justfile`, `Taskfile` — developer workflows",
+    "",
+    "### Phase 3: Ask the developer about what code can't reveal",
+    "",
+    "Ask targeted questions based on gaps you found. These should be specific, not generic:",
+    "",
+    "**Good questions** (based on actually reading code):",
+    "- \"I see complex retry logic in `src/queue/worker.ts` — what should a new developer know about the queue system?\"",
+    "- \"CLAUDE.md says 'Express API' but I see GraphQL resolvers in `src/graphql/` — should the architecture section mention this?\"",
+    "- \"The key types list includes `UserService` but that file was deleted 5 commits ago. Can I remove it?\"",
+    "- \"I see 3 different error handling patterns across the codebase — is there a preferred approach?\"",
+    "- \"What are the gotchas when setting up the dev environment for the first time?\"",
+    "- \"Are there any areas of the code that are fragile or have known issues?\"",
+    "",
+    "**Bad questions** (too generic, could be asked about any repo):",
+    "- \"What does this project do?\" (read the README)",
+    "- \"What testing framework do you use?\" (static analysis already knows)",
+    "",
+    "Present questions conversationally. Wait for the developer's answers.",
+    "",
+    "### Phase 4: Populate context into the right files",
+    "",
+    "Based on everything you've learned:",
+    "1. Save developer answers to `.claude/.onboard-answers.json` (add to `domainQA` array, set `answeredAt`)",
+    "2. Run `npx claude-onboard update` to regenerate auto-sections",
+    "3. For context that requires manual edits, edit files directly — but ONLY outside the auto-markers",
+    "",
+    "**Where different context goes:**",
+    "- Architecture decisions, module purposes → `.claude/context/architecture.md`",
+    "- Code patterns, conventions, anti-patterns → `.claude/context/patterns.md`",
+    "- Critical paths, fragile areas, coupling → `.claude/context/hotfiles.md`",
+    "- Folder-specific context → `<dir>/CLAUDE.md` (see below)",
+    "- Everything else → manual sections of `.claude/CLAUDE.md` (outside auto-markers)",
+    "",
+    "### Folder-Level CLAUDE.md — Verify and Enrich",
+    "",
+    "Each hotpath directory has its own `CLAUDE.md` with auto-generated key types and hot files. The auto-generated content is a skeleton — your job is to add the context that static analysis can't provide.",
+    "",
+    "For each folder-level CLAUDE.md:",
+    "1. **Read** the auto-generated content (inside the auto-markers)",
+    "2. **Read** the actual source files in that directory — understand what the module does",
+    "3. **Verify** the key types are still accurate and descriptions are meaningful (not just \"service\" or \"Spring component\")",
+    "4. **Ask the developer** about this module if the purpose isn't clear from code alone:",
+    "   - \"What business problem does the `core/` module solve?\"",
+    "   - \"How does `persistence/` relate to `core/`? Are there any ORM gotchas?\"",
+    "   - \"Are there ordering constraints or hidden dependencies between these modules?\"",
+    "5. **Add context outside the auto-markers** with what you learned:",
+    "   - Module purpose and business domain it serves",
+    "   - How this module relates to other modules (dependencies, data flow)",
+    "   - Non-obvious patterns or conventions specific to this directory",
+    "   - Known gotchas, fragile areas, or things that break easily",
+    "",
+    "Example of enriched folder CLAUDE.md:",
+    "```markdown",
+    "<!-- Manual context added by developer/agent -->",
+    "## Purpose",
+    "Handles order allocation to field executives. The AllocationEngine is the core abstraction —",
+    "subclasses implement different strategies (standard, batch, future serviceability).",
+    "",
+    "## Key Relationships",
+    "- Depends on `persistence/` for FE availability data",
+    "- Called by `web/` controllers via use-case interfaces in `core/domain/`",
+    "",
+    "## Gotchas",
+    "- AllocationEngine subclasses must be @Service beans — the strategy pattern relies on Spring injection",
+    "- ProspectiveFieldExecutive is mutable during allocation — don't cache across requests",
+    "",
+    "<!-- onboarder:auto-start -->",
+    "(auto-generated content)",
+    "<!-- onboarder:auto-end -->",
+    "```",
     "",
     "## Auto-Marker System",
     "",
@@ -1079,8 +1198,8 @@ export function renderDocMaintainerAgent(analysis: RepositoryAnalysis): string {
     "## Managed Files",
     "",
     "**Auto-marker files** (auto section regenerated, manual sections preserved):",
-    "- `.claude/CLAUDE.md` — main project documentation",
-  ];
+    "- `.claude/CLAUDE.md` — main project context",
+  );
 
   if (sa && sa.hotpathDirs.length > 0) {
     for (const dir of sa.hotpathDirs) {
@@ -1103,40 +1222,18 @@ export function renderDocMaintainerAgent(analysis: RepositoryAnalysis): string {
     "",
     "## Staleness Detection",
     "",
-    "To determine if docs need updating:",
+    "To determine if context needs updating:",
     "1. Read `.claude/.onboarder-meta.json` to get `lastUpdated` timestamp",
     "2. Run `git log --oneline --since=\"<lastUpdated>\"` to count commits since last update",
-    "3. Docs are **stale** if any of these are true:",
+    "3. Context is **stale** if any of these are true:",
     "   - More than 20 commits since last update",
     "   - New directories exist under `src/` that don't have folder-level CLAUDE.md files",
     "   - `package.json` (or equivalent build file) has changed since last update",
     "   - New frameworks or major dependencies were added",
     "",
-    "## Update Process",
+    "## Context Quality Verification",
     "",
-    "### For auto-marker files:",
-    "Run `npx claude-onboard update` to regenerate auto sections. This is always safe — manual content outside markers is preserved.",
-    "",
-    "### For write-once files (context/, commands/, agents/):",
-    "These require manual updates. When updating:",
-    "",
-    "1. **architecture.md** — Update if new modules, layers, or services were added. Check `git log --stat` for new directories.",
-    "2. **patterns.md** — Update if new code patterns or conventions emerged. Look at recent PRs for new idioms.",
-    "3. **hotfiles.md** — Update if critical paths shifted. Run `git log --name-only --since=\"<date>\" | sort | uniq -c | sort -rn` to find new hot files.",
-    "",
-    "### For folder-level CLAUDE.md:",
-    "If a new directory appears under a hotpath that doesn't have a CLAUDE.md, create one with:",
-    "- Brief description of what the directory contains",
-    "- Key types and their purpose",
-    "- Hot files in that directory",
-    "",
-    "## Documentation Quality Loop (ALWAYS do this)",
-    "",
-    "Every time you are invoked, you MUST run the documentation quality loop. This is your primary value: evaluating documentation against actual code and improving it until it's genuinely useful.",
-    "",
-    "### The Rubric",
-    "",
-    "Evaluate the documentation across 8 dimensions (each scored 0-5):",
+    "After extracting and populating context, verify completeness across 8 dimensions (each scored 0-5):",
     "",
     "| Dimension | 5 (Excellent) | 3 (Adequate) | 1 (Poor) | 0 (Missing) |",
     "|-|-|-|-|-|",
@@ -1151,36 +1248,11 @@ export function renderDocMaintainerAgent(analysis: RepositoryAnalysis): string {
     "",
     "**Overall score**: Sum of all dimensions × 2.5 = 0-100",
     "",
-    "### The Loop",
-    "",
-    "Repeat until score ≥ 80 or max 5 rounds:",
-    "",
-    "**Step 1: Read and evaluate the docs**",
-    "",
-    "Read these files:",
-    "- `.claude/CLAUDE.md` — main documentation",
-    "- `.claude/context/architecture.md`",
-    "- `.claude/context/patterns.md`",
-    "- `.claude/context/hotfiles.md`",
-    "- Any folder-level `CLAUDE.md` files",
-    "",
-    "For each rubric dimension, cross-reference the docs against actual code:",
-    "- **Project Identity**: Read `README.md` or `package.json` — does CLAUDE.md match?",
-    "- **Build & Run**: Run `cat package.json | grep -A20 scripts` (or equivalent) — are all commands listed?",
-    "- **Architecture**: List top-level directories, read key files — does the architecture section reflect reality?",
-    "- **Key Types**: Read the listed source files — are the types still there? Are descriptions accurate?",
-    "- **Conventions**: Check recent commits (`git log --oneline -10`) — do conventions match?",
-    "- **Framework Decisions**: Check if framework-specific choices are documented (not generic best practices)",
-    "- **Domain Context**: Look for business logic, domain terms, non-obvious patterns that aren't covered",
-    "- **Staleness**: Compare `.claude/.onboarder-meta.json` lastUpdated against recent changes",
-    "",
-    "**Step 2: Write the score**",
-    "",
     "Write your evaluation to `.claude/.onboard-score.json`:",
     "```json",
     "{",
     "  \"evaluatedAt\": \"<ISO timestamp>\",",
-    "  \"evaluatedBy\": \"doc-maintainer-agent\",",
+    "  \"evaluatedBy\": \"context-maintainer-agent\",",
     "  \"overall\": 72,",
     "  \"rubric\": {",
     "    \"projectIdentity\": { \"score\": 4, \"max\": 5, \"notes\": \"Clear description from README\" },",
@@ -1199,28 +1271,7 @@ export function renderDocMaintainerAgent(analysis: RepositoryAnalysis): string {
     "}",
     "```",
     "",
-    "**Step 3: Ask the developer about gaps**",
-    "",
-    "For each gap found in your evaluation, ask the developer a targeted question. These are better than CLI-generated questions because they're based on actually reading the docs and code.",
-    "",
-    "Examples of good questions:",
-    "- \"CLAUDE.md says 'Express API' but I see GraphQL resolvers in `src/graphql/` — should the architecture section mention this?\"",
-    "- \"The key types list includes `UserService` but that file was deleted 5 commits ago. Can I remove it?\"",
-    "- \"I see complex retry logic in `src/queue/worker.ts` — what should a new developer know about the queue system?\"",
-    "- \"You use Next.js App Router — do you have a convention for where server actions go vs API routes?\"",
-    "",
-    "Present questions conversationally. Wait for the developer's answers.",
-    "",
-    "**Step 4: Update the docs**",
-    "",
-    "Based on the answers:",
-    "1. Save answers to `.claude/.onboard-answers.json` (add to `domainQA` array, set `answeredAt`)",
-    "2. Run `npx claude-onboard update` to regenerate auto-sections",
-    "3. For gaps that require manual edits (e.g., adding a new section, fixing inaccuracies), edit the files directly — but ONLY outside the auto-markers",
-    "",
-    "**Step 5: Re-evaluate**",
-    "",
-    "Go back to Step 1. Read the updated docs and re-score. Stop when score ≥ 80 or after 5 rounds.",
+    "Repeat the extract → populate → verify loop until score ≥ 80 or max 5 rounds.",
     "",
     "## Writing Style",
     "",
@@ -1231,8 +1282,8 @@ export function renderDocMaintainerAgent(analysis: RepositoryAnalysis): string {
   );
 
   return agentFrontmatter({
-    name: "doc-maintainer",
-    description: "Evaluates doc quality against code, asks targeted questions, and improves coverage. Spawn after init or update.",
+    name: "context-maintainer",
+    description: "Senior-developer onboarding agent. Extracts context from code, git history, and developer knowledge, then populates it into the right files. Spawn after init or update.",
     tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
     model: "sonnet",
     memory: "project",

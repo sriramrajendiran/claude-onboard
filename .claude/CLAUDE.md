@@ -106,7 +106,7 @@ Specialized agents are available in `.claude/agents/`. Use them for autonomous, 
 
 - **reviewer** — Spawn when reviewing PRs or code changes. Knows this repo's conventions, critical paths, and co-change coupling.
 - **test-writer** — Spawn when writing or updating tests. Knows the test framework, structure, and patterns.
-- **doc-maintainer** — Spawn after significant code changes to update documentation. Knows the auto-marker system.
+- **context-maintainer** — Spawn after significant code changes to update documentation. Knows the auto-marker system.
 - **security-auditor** — Spawn for security reviews. Knows this repo's tech stack and attack surface.
 
 ## Folder Context

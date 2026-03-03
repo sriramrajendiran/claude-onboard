@@ -4,7 +4,7 @@ import {
   renderPostMergeHook,
   renderPostRewriteHook,
   renderPrepareCommitMsgHook,
-  renderUpdateDocsScript,
+  renderUpdateContextScript,
   renderUninstallScript,
   MARKER_START,
   MARKER_END,
@@ -25,7 +25,7 @@ describe("Hook Scripts", () => {
   it("post-merge runs synchronously", () => {
     const script = renderPostMergeHook();
     expect(script).not.toMatch(/&\s*$/m);
-    expect(script).toContain("update-docs.sh");
+    expect(script).toContain("update-context.sh");
   });
 
   it("post-rewrite hook exists", () => {
@@ -38,28 +38,28 @@ describe("Hook Scripts", () => {
     expect(script).toBe("");
   });
 
-  it("update-docs script has shebang", () => {
-    const script = renderUpdateDocsScript();
+  it("update-context script has shebang", () => {
+    const script = renderUpdateContextScript();
     expect(script).toMatch(/^#!\/bin\/sh/);
   });
 
-  it("update-docs script checks for claude-onboard", () => {
-    const script = renderUpdateDocsScript();
+  it("update-context script checks for claude-onboard", () => {
+    const script = renderUpdateContextScript();
     expect(script).toContain("claude-onboard");
   });
 
-  it("update-docs script implements throttling", () => {
-    const script = renderUpdateDocsScript();
+  it("update-context script implements throttling", () => {
+    const script = renderUpdateContextScript();
     expect(script).toContain("THROTTLE_SECONDS");
   });
 
-  it("update-docs script implements log rotation", () => {
-    const script = renderUpdateDocsScript();
+  it("update-context script implements log rotation", () => {
+    const script = renderUpdateContextScript();
     expect(script).toContain("1048576");
   });
 
-  it("update-docs script uses lock file", () => {
-    const script = renderUpdateDocsScript();
+  it("update-context script uses lock file", () => {
+    const script = renderUpdateContextScript();
     expect(script).toContain("LOCK_FILE");
   });
 

@@ -1,10 +1,10 @@
 # claude-onboard
 
-Auto-onboard any git repo for Claude Code with self-maintaining documentation, autonomous agents, and doc-quality scoring.
+Auto-onboard any git repo for Claude Code with self-maintaining context, autonomous agents, and confidence scoring.
 
 ## What it does
 
-One command analyzes your repository — git history, source code, architecture, conventions — and generates a complete `.claude/` structure including repo-specific autonomous agents. The **doc-maintainer agent** then evaluates documentation quality against actual code, asks targeted questions about gaps, and iterates until confidence is high. Git hooks keep docs fresh automatically.
+One command analyzes your repository — git history, source code, architecture, conventions — and generates a complete `.claude/` structure including repo-specific autonomous agents. The **context-maintainer agent** then acts like a senior developer onboarding the repo — extracting context from code, git history, and developer knowledge, asking targeted questions about gaps, and populating it into the right files until confidence is high. Git hooks keep docs fresh automatically.
 
 ```
 $ npx claude-onboard init
@@ -17,7 +17,7 @@ $ npx claude-onboard init
    Frameworks:        Spring Boot
 
 🤖 Agents (4 built)
-   reviewer, test-writer, doc-maintainer, security-auditor
+   reviewer, test-writer, context-maintainer, security-auditor
 
 📊 Documentation Confidence: 91/100 (A)
    Project Identity     20/20 ✓
@@ -27,7 +27,7 @@ $ npx claude-onboard init
    Domain Context       14/15 ~
    Testing              8/10  ~
 
-   💡 For deeper doc quality scoring, spawn the doc-maintainer agent in Claude Code
+   💡 For deeper context extraction, spawn the context-maintainer agent in Claude Code
 ```
 
 ## Prerequisites
@@ -43,7 +43,7 @@ $ npx claude-onboard init
 npm i -D claude-onboard
 npx claude-onboard init
 
-# Then in Claude Code, run /project:update-docs to spawn the doc-maintainer agent
+# Then in Claude Code, run /project:update-context to spawn the context-maintainer agent
 # for deep quality scoring, targeted questions, and doc improvements
 ```
 
@@ -69,21 +69,6 @@ npm install -D claude-onboard
 npx claude-onboard init
 ```
 
-### Claude Code MCP config
-
-Add to `.claude/settings.json` or `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "claude-onboard": {
-      "command": "npx",
-      "args": ["claude-onboard"]
-    }
-  }
-}
-```
-
 ## Three-Layer Architecture
 
 claude-onboard generates three complementary layers:
@@ -96,7 +81,7 @@ Autonomous specialists that Claude spawns for delegated work. Each agent carries
 |-------|---------------|-------------|
 | **reviewer** | Always | Reviews code against repo conventions, validates co-change pairs, checks blast radius on load-bearing modules |
 | **test-writer** | Test framework detected | Generates tests matching the repo's exact framework, structure, and naming patterns |
-| **doc-maintainer** | Always | Evaluates doc quality against code, asks targeted questions, improves coverage. Owns the quality scoring loop |
+| **context-maintainer** | Always | Senior-developer onboarding agent. Extracts context from code, git history, and developer knowledge. Verifies and enriches folder-level CLAUDE.md files. Owns the quality scoring loop |
 | **security-auditor** | Always | Framework-specific vulnerability scanning (Spring: SpEL/HQL injection, actuator exposure; Express: prototype pollution; etc.) |
 
 Agent frontmatter includes `model`, `permissionMode`, `maxTurns`, `memory`, and `isolation` for precise control. CLAUDE.md tells Claude when to spawn each agent.
@@ -109,7 +94,7 @@ User-invoked interactive workflows accessible via slash commands:
 |---------|-------------|
 | `/project:onboard` | Get oriented — or run first-time setup if not yet onboarded |
 | `/project:status` | Check doc health and confidence |
-| `/project:update-docs` | Update docs and spawn doc-maintainer for quality scoring |
+| `/project:update-context` | Update context and spawn context-maintainer for deep extraction |
 | `/project:pr-review` | Review a PR with project context |
 | `/project:ask` | Ask questions about the repo |
 
@@ -129,16 +114,16 @@ Shared knowledge base that agents, commands, and Claude conversations all refere
 ├── CLAUDE.md                    # Main context file (everything Claude needs)
 ├── .onboarder-meta.json         # Generation metadata
 ├── .onboard-answers.json        # Human answers (persisted)
-├── .onboard-score.json          # Doc quality score (written by doc-maintainer agent)
+├── .onboard-score.json          # Doc quality score (written by context-maintainer agent)
 ├── agents/
 │   ├── reviewer.md              # Code review with co-change validation
 │   ├── test-writer.md           # Test generation (if test framework detected)
-│   ├── doc-maintainer.md        # Doc quality evaluation and improvement
+│   ├── context-maintainer.md    # Context extraction and quality scoring
 │   └── security-auditor.md      # Framework-specific security auditing
 ├── commands/
 │   ├── onboard.md               # /project:onboard
 │   ├── status.md                # /project:status
-│   ├── update-docs.md           # /project:update-docs
+│   ├── update-context.md        # /project:update-context
 │   ├── pr-review.md             # /project:pr-review
 │   └── ask.md                   # /project:ask
 ├── context/
@@ -146,7 +131,7 @@ Shared knowledge base that agents, commands, and Claude conversations all refere
 │   ├── patterns.md              # Code patterns and conventions
 │   └── hotfiles.md              # Critical paths and coupling data
 └── hooks/
-    └── update-docs.sh           # Auto-update runner
+    └── update-context.sh       # Auto-update runner
 
 src/components/CLAUDE.md         # Folder-level context (auto-generated for hot directories)
 src/api/CLAUDE.md
@@ -171,9 +156,9 @@ The CLI scores confidence (0-100) across 6 dimensions during `init` and `update`
 
 When confidence is below the threshold (default 80), the CLI **prompts** you to fill gaps via `$EDITOR`. Your answers are saved to `.claude/.onboard-answers.json` and preserved across updates.
 
-### Doc-Maintainer Agent Score (deep, reads actual docs + code)
+### Context-Maintainer Agent Score (deep, reads actual docs + code)
 
-The doc-maintainer agent provides the **authoritative** quality score. It:
+The context-maintainer agent provides the **authoritative** quality score. It:
 
 1. Reads the generated documentation
 2. Cross-references against actual source code
@@ -183,19 +168,19 @@ The doc-maintainer agent provides the **authoritative** quality score. It:
 6. Re-evaluates until score ≥ 80 or 5 rounds complete
 7. Writes the score to `.claude/.onboard-score.json`
 
-Spawn it via `/project:update-docs` in Claude Code.
+Spawn it via `/project:update-context` in Claude Code.
 
 ## Self-Maintenance
 
 Git hooks keep docs fresh automatically:
 
 ```
-commit → post-commit hook → update-docs.sh → docs refresh (background)
+commit → post-commit hook → update-context.sh → docs refresh (background)
 merge  → post-merge hook  → docs refresh (synchronous)
 rebase → post-rewrite hook → docs refresh
 ```
 
-Updates are throttled (max once per 5 minutes) and fail silently — they never block git operations. Human answers persist across updates. When 15+ files change, the hook warns you to run the doc-maintainer agent for deeper review.
+Updates are throttled (max once per 5 minutes) and fail silently — they never block git operations. Human answers persist across updates. When 15+ files change, the hook warns you to run the context-maintainer agent for deeper review.
 
 ## CLI Reference
 
@@ -246,7 +231,7 @@ npx claude-onboard init --ci
 
 # Generate baseline docs, then use agent for quality scoring
 npx claude-onboard init --no-interactive
-# In Claude Code: /project:update-docs
+# In Claude Code: /project:update-context
 
 # Check if docs are stale
 npx claude-onboard status
@@ -254,15 +239,6 @@ npx claude-onboard status
 # Update after many commits
 npx claude-onboard update
 ```
-
-## MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `onboard` | Full repository analysis and doc generation |
-| `update_docs` | Incremental update based on recent changes |
-| `analyze_pr` | Analyze a specific PR and update docs |
-| `check_doc_health` | Check documentation freshness and completeness |
 
 ## Supported Ecosystems
 

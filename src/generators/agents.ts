@@ -2,7 +2,7 @@ import type { RepositoryAnalysis, GeneratedFile } from "../types.js";
 import {
   renderReviewerAgent,
   renderTestWriterAgent,
-  renderDocMaintainerAgent,
+  renderContextMaintainerAgent,
   renderSecurityAuditorAgent,
 } from "./templates.js";
 
@@ -24,9 +24,9 @@ const AGENT_TEMPLATES: AgentTemplate[] = [
     render: renderTestWriterAgent,
   },
   {
-    filename: "doc-maintainer.md",
+    filename: "context-maintainer.md",
     condition: () => true,
-    render: renderDocMaintainerAgent,
+    render: renderContextMaintainerAgent,
   },
   {
     filename: "security-auditor.md",

@@ -1,6 +1,6 @@
 #!/bin/sh
-# claude-onboard: update-docs runner
-# Called by git hooks to regenerate documentation locally.
+# claude-onboard: update-context runner
+# Called by git hooks to regenerate context locally.
 # Runs claude-onboard update (no LLM needed — pure static analysis).
 # Fails silently to never block git operations.
 

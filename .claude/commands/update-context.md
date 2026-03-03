@@ -1,9 +1,9 @@
 ---
-name: update-docs
-description: Update documentation based on recent changes
+name: update-context
+description: Update context based on recent changes
 ---
 
-Update the onboarding docs to reflect recent changes:
+Update the onboarding context to reflect recent changes:
 
 1. Read `.claude/.onboarder-meta.json` to find the last update timestamp.
 2. Run `git log --oneline` since that date to see what changed.

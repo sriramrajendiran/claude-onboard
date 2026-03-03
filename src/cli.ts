@@ -447,7 +447,7 @@ program
         );
       }
 
-      console.log(`   ${c.blue("💡")} For deeper doc quality scoring, spawn the doc-maintainer agent in Claude Code\n`);
+      console.log(`   ${c.blue("💡")} For deeper context extraction, spawn the context-maintainer agent in Claude Code\n`);
 
       console.log(`${c.blue("🚀")} Next Steps`);
       console.log("   1. Open Claude Code in this directory");
@@ -598,7 +598,7 @@ program
           console.log(`   ${c.green("Confidence is already at target.")} No questions needed.\n`);
         }
 
-        console.log(`   ${c.blue("💡")} For deeper doc quality scoring, spawn the doc-maintainer agent in Claude Code\n`);
+        console.log(`   ${c.blue("💡")} For deeper context extraction, spawn the context-maintainer agent in Claude Code\n`);
       } else if (changedFiles.size >= 15) {
         console.log(
           `${changedFiles.size} files changed — run with --interactive to answer context questions.`,

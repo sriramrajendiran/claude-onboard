@@ -11,7 +11,7 @@ import {
   renderPostMergeHook,
   renderPostRewriteHook,
   renderPrepareCommitMsgHook,
-  renderUpdateDocsScript,
+  renderUpdateContextScript,
   MARKER_START,
   MARKER_END,
 } from "./scripts.js";
@@ -25,17 +25,17 @@ export class HookInstaller {
     const installed: string[] = [];
     const manager = this.detectHookManager();
 
-    // Install update-docs.sh runner script
+    // Install update-context.sh runner script
     const hooksDir = join(this.repoPath, ".claude", "hooks");
     if (!existsSync(hooksDir)) {
       mkdirSync(hooksDir, { recursive: true });
     }
     writeFileSync(
-      join(hooksDir, "update-docs.sh"),
-      renderUpdateDocsScript(),
+      join(hooksDir, "update-context.sh"),
+      renderUpdateContextScript(),
       "utf-8",
     );
-    chmodSync(join(hooksDir, "update-docs.sh"), 0o755);
+    chmodSync(join(hooksDir, "update-context.sh"), 0o755);
 
     const hooks: [string, string][] = [
       ["post-commit", renderPostCommitHook()],
@@ -128,7 +128,13 @@ export class HookInstaller {
     const hookPath = join(huskyDir, hookName);
     if (existsSync(hookPath)) {
       const existing = readFileSync(hookPath, "utf-8");
-      if (existing.includes(MARKER_START)) return; // already installed
+      if (existing.includes(MARKER_START)) {
+        // Replace existing marked section with updated content
+        const updated = this.removeMarked(existing).trim();
+        const base = updated || "#!/bin/sh";
+        writeFileSync(hookPath, this.appendMarked(base, content), "utf-8");
+        return;
+      }
       writeFileSync(hookPath, this.appendMarked(existing, content), "utf-8");
     } else {
       writeFileSync(hookPath, `#!/bin/sh\n${content}\n`, "utf-8");
@@ -146,8 +152,14 @@ export class HookInstaller {
     const hookPath = join(hooksDir, hookName);
     if (existsSync(hookPath)) {
       const existing = readFileSync(hookPath, "utf-8");
-      if (existing.includes(MARKER_START)) return; // already installed
-      writeFileSync(hookPath, this.appendMarked(existing, content), "utf-8");
+      if (existing.includes(MARKER_START)) {
+        // Replace existing marked section with updated content
+        const updated = this.removeMarked(existing).trim();
+        const base = updated || "#!/bin/sh";
+        writeFileSync(hookPath, this.appendMarked(base, content), "utf-8");
+      } else {
+        writeFileSync(hookPath, this.appendMarked(existing, content), "utf-8");
+      }
     } else {
       writeFileSync(hookPath, `#!/bin/sh\n${content}\n`, "utf-8");
     }

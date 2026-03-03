@@ -1,9 +1,9 @@
 {
   "name": "claude-onboard",
-  "version": "0.4.1",
-  "description": "Claude Code MCP plugin: auto-onboard any repo with self-maintaining documentation",
+  "version": "0.5.0",
+  "description": "Auto-onboard any repo with self-maintaining Claude Code documentation",
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/cli.js",
   "bin": {
     "claude-onboard": "./dist/cli.js"
   },
@@ -20,7 +20,6 @@
   "keywords": [
     "claude",
     "claude-code",
-    "mcp",
     "developer-tools",
     "documentation",
     "git",
@@ -28,8 +27,8 @@
   ],
   "scripts": {
     "build": "rimraf dist && tsc",
-    "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
     "cli": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -52,17 +51,15 @@
   ],
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": "./dist/cli.js",
+      "types": "./dist/cli.d.ts"
     }
   },
   "dependencies": {
     "@inquirer/prompts": "^8.3.0",
-    "@modelcontextprotocol/sdk": "^1.27.1",
     "chalk": "^5.6.2",
     "commander": "^14.0.3",
-    "ora": "^9.3.0",
-    "zod": "^4.3.6"
+    "ora": "^9.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

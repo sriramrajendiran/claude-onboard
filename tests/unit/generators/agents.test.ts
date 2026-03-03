@@ -46,7 +46,7 @@ describe("AgentBuilder", () => {
     const files = await builder.buildAll();
     const names = files.map((f) => f.path);
     expect(names).toContain(".claude/agents/reviewer.md");
-    expect(names).toContain(".claude/agents/doc-maintainer.md");
+    expect(names).toContain(".claude/agents/context-maintainer.md");
     expect(names).toContain(".claude/agents/security-auditor.md");
   });
 

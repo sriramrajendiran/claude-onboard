@@ -7,22 +7,22 @@ function wrapInMarkers(script: string): string {
 
 export function renderPostCommitHook(): string {
   return wrapInMarkers(`# claude-onboard: post-commit hook (runs in background)
-if [ -f ".claude/hooks/update-docs.sh" ]; then
-  sh .claude/hooks/update-docs.sh "commit" &
+if [ -f ".claude/hooks/update-context.sh" ]; then
+  sh .claude/hooks/update-context.sh "commit" &
 fi`);
 }
 
 export function renderPostMergeHook(): string {
   return wrapInMarkers(`# claude-onboard: post-merge hook (runs synchronously)
-if [ -f ".claude/hooks/update-docs.sh" ]; then
-  sh .claude/hooks/update-docs.sh "merge"
+if [ -f ".claude/hooks/update-context.sh" ]; then
+  sh .claude/hooks/update-context.sh "merge"
 fi`);
 }
 
 export function renderPostRewriteHook(): string {
   return wrapInMarkers(`# claude-onboard: post-rewrite hook
-if [ -f ".claude/hooks/update-docs.sh" ]; then
-  sh .claude/hooks/update-docs.sh "rebase"
+if [ -f ".claude/hooks/update-context.sh" ]; then
+  sh .claude/hooks/update-context.sh "rebase"
 fi`);
 }
 
@@ -32,9 +32,9 @@ export function renderPrepareCommitMsgHook(): string {
   return "";
 }
 
-export function renderUpdateDocsScript(): string {
+export function renderUpdateContextScript(): string {
   return `#!/bin/sh
-# claude-onboard: update-docs runner
+# claude-onboard: update-context runner
 # Called by git hooks to regenerate documentation locally.
 # Runs claude-onboard update (no LLM needed — pure static analysis).
 # Fails silently to never block git operations.
@@ -154,8 +154,8 @@ for HOOK in post-commit post-merge post-rewrite prepare-commit-msg; do
   fi
 done
 
-echo "Removing update-docs script..."
-rm -f "$REPO_ROOT/.claude/hooks/update-docs.sh"
+echo "Removing update-context script..."
+rm -f "$REPO_ROOT/.claude/hooks/update-context.sh"
 rm -f "$REPO_ROOT/.claude/.update-lock"
 
 echo "Done. To also remove generated docs, run: rm -rf .claude/"

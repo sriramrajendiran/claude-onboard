@@ -18,7 +18,7 @@ import {
   renderFolderClaudeMd,
   renderOnboardCommand,
   renderStatusCommand,
-  renderUpdateDocsCommand,
+  renderUpdateContextCommand,
   renderPRReviewCommand,
   renderAskCommand,
   renderArchitectureContext,
@@ -78,7 +78,7 @@ export class DocumentGenerator {
     const commands: [string, string][] = [
       [".claude/commands/onboard.md", renderOnboardCommand()],
       [".claude/commands/status.md", renderStatusCommand()],
-      [".claude/commands/update-docs.md", renderUpdateDocsCommand()],
+      [".claude/commands/update-context.md", renderUpdateContextCommand()],
       [".claude/commands/pr-review.md", renderPRReviewCommand()],
       [".claude/commands/ask.md", renderAskCommand()],
     ];
