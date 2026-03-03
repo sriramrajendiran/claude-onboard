@@ -81,7 +81,7 @@ Autonomous specialists that Claude spawns for delegated work. Each agent carries
 |-------|---------------|-------------|
 | **reviewer** | Always | Reviews code against repo conventions, validates co-change pairs, checks blast radius on load-bearing modules |
 | **test-writer** | Test framework detected | Generates tests matching the repo's exact framework, structure, and naming patterns |
-| **context-maintainer** | Always | Senior-developer onboarding agent. On initial onboard, walks the last 200-400 commit diffs to understand how the codebase evolves — patterns, architecture decisions, conventions, and pain points. On subsequent runs, reads only diffs since the last update. Verifies and enriches folder-level CLAUDE.md files. Owns the quality scoring loop |
+| **context-maintainer** | Always | Senior-developer onboarding agent. On initial onboard, walks the last 200-400 commit diffs to deeply understand how the codebase evolves. Writes findings where they belong — folder-specific context into folder-level CLAUDE.md files, cross-cutting patterns into `.claude/context/` files, and creates new topic files (e.g., `decisions.md`, `tech-debt.md`) as needed. On subsequent runs, reads only diffs since the last update. Owns the quality scoring loop |
 | **security-auditor** | Always | Framework-specific vulnerability scanning (Spring: SpEL/HQL injection, actuator exposure; Express: prototype pollution; etc.) |
 
 Agent frontmatter includes `model`, `permissionMode`, `maxTurns`, `memory`, and `isolation` for precise control. CLAUDE.md tells Claude when to spawn each agent.
