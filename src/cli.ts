@@ -8,7 +8,7 @@ import { HookInstaller } from "./hooks/installer.js";
 import { GitHubClient } from "./analyzers/github.js";
 import { join, dirname } from "node:path";
 import { AnalysisTier } from "./types.js";
-import type { OnboardOptions, UpdateOptions, GeneratedFile, HumanAnswers, ConfidenceScore, ConfidenceGap, SmartQuestion } from "./types.js";
+import type { OnboardOptions, UpdateOptions, GeneratedFile, HumanAnswers, ConfidenceScore, SmartQuestion } from "./types.js";
 
 const program = new Command();
 
@@ -277,7 +277,7 @@ program
         if (spinner) spinner.text = step;
       });
 
-      if (Boolean(opts.dryRun)) {
+      if (opts.dryRun) {
         spinner?.stop();
         const docGen = new DocumentGenerator(repoPath, analysis);
         const files = await docGen.generateAll(options.forceRegenerate);
@@ -447,6 +447,8 @@ program
         );
       }
 
+      console.log(`   ${c.blue("💡")} For deeper doc quality scoring, spawn the doc-maintainer agent in Claude Code\n`);
+
       console.log(`${c.blue("🚀")} Next Steps`);
       console.log("   1. Open Claude Code in this directory");
       console.log("   2. Claude now has full context about your codebase");
@@ -465,6 +467,8 @@ program
   .argument("[path]", "Path to the repository", ".")
   .option("--since <commit>", "Update since this commit SHA")
   .option("--mode <mode>", "Update mode", "manual")
+  .option("--interactive", "Run confidence scoring loop and ask smart questions")
+  .option("--confidence-threshold <n>", "Target confidence score (0-100)", "80")
   .action(async (path: string, opts: Record<string, unknown>) => {
     const repoPath = resolve(path);
     try {
@@ -497,11 +501,109 @@ program
         console.log("No snapshot found — ran full analysis.");
       }
 
-      const existingAnswers = loadAnswers(repoPath) ?? undefined;
-      const docGen = new DocumentGenerator(repoPath, result.analysis, existingAnswers);
+      let answers = loadAnswers(repoPath) ?? ({} as HumanAnswers);
+      const interactive = Boolean(opts.interactive);
+      const threshold = Number(opts.confidenceThreshold) || 80;
+
+      // Count churn for display
+      const changedFiles = new Set<string>();
+      for (const commit of result.analysis.commits) {
+        for (const f of commit.filesChanged) changedFiles.add(f);
+      }
+
+      // Always regenerate docs first
+      let docGen = new DocumentGenerator(repoPath, result.analysis, answers);
       const files = await docGen.updateIncremental(updateOpts);
       const updated = files.filter((f: GeneratedFile) => f.action !== "skipped");
       console.log(`Updated ${updated.length} files.`);
+
+      if (interactive) {
+        const chalk = await import("chalk");
+        const c = chalk.default;
+        const ora = await import("ora");
+        const { confirm } = await import("@inquirer/prompts");
+
+        if (changedFiles.size > 0) {
+          console.log(`\n   ${c.blue(`${changedFiles.size} files changed`)} since last update.`);
+        }
+
+        // Compute confidence and run the scoring loop (same as init)
+        const baseScore = analyzer.computeConfidenceScore(result.analysis);
+        let score = hasNewContent(answers) ? computeConfidenceWithAnswers(baseScore, answers) : baseScore;
+        displayConfidenceScore(score, c);
+
+        let round = 1;
+        const MAX_ROUNDS = 5;
+
+        while (score.total < threshold && round <= MAX_ROUNDS) {
+          const smartQuestions = analyzer.generateSmartQuestions(result.analysis, score.gaps, answers);
+          if (smartQuestions.length === 0) break;
+
+          if (round === 1) {
+            console.log(
+              `   ${c.yellow(`Score ${score.total} is below target ${threshold}.`)} Let's fill the gaps.\n`,
+            );
+          } else {
+            console.log(
+              `\n   ${c.yellow(`Round ${round}:`)} Score is ${score.total}/${threshold} — ${smartQuestions.length} question${smartQuestions.length > 1 ? "s" : ""} remaining.`,
+            );
+          }
+
+          const newAnswers = await promptForGaps(smartQuestions, answers, c);
+
+          const answeredSomething =
+            newAnswers.projectDescription !== answers.projectDescription ||
+            newAnswers.buildCommands !== answers.buildCommands ||
+            newAnswers.architectureNotes !== answers.architectureNotes ||
+            newAnswers.codePatterns !== answers.codePatterns ||
+            newAnswers.domainContext !== answers.domainContext ||
+            newAnswers.testingNotes !== answers.testingNotes ||
+            (newAnswers.domainQA?.length ?? 0) > (answers.domainQA?.length ?? 0);
+
+          if (!answeredSomething) {
+            console.log(`\n   ${c.gray("No new answers provided. Finishing up.")}`);
+            break;
+          }
+
+          answers = newAnswers;
+          saveAnswers(repoPath, answers);
+
+          // Regenerate docs with new answers
+          const spinner = ora.default("Regenerating documentation...").start();
+          docGen = new DocumentGenerator(repoPath, result.analysis, answers);
+          await docGen.generateAll(true);
+          spinner.stop();
+
+          // Recompute score
+          score = computeConfidenceWithAnswers(baseScore, answers);
+          displayConfidenceScore(score, c);
+
+          if (score.total >= threshold) {
+            console.log(`   ${c.green("Target confidence reached!")}\n`);
+            break;
+          }
+
+          if (round < MAX_ROUNDS) {
+            const keepGoing = await confirm({
+              message: `Score is ${score.total}/${threshold}. Continue improving?`,
+              default: true,
+            });
+            if (!keepGoing) break;
+          }
+
+          round++;
+        }
+
+        if (score.total >= threshold && round === 1) {
+          console.log(`   ${c.green("Confidence is already at target.")} No questions needed.\n`);
+        }
+
+        console.log(`   ${c.blue("💡")} For deeper doc quality scoring, spawn the doc-maintainer agent in Claude Code\n`);
+      } else if (changedFiles.size >= 15) {
+        console.log(
+          `${changedFiles.size} files changed — run with --interactive to answer context questions.`,
+        );
+      }
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
@@ -560,6 +662,54 @@ program
       }
     } catch (err) {
       console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("questions")
+  .description("Output confidence score and smart questions as JSON (for agent consumption)")
+  .argument("[path]", "Path to the repository", ".")
+  .option("--confidence-threshold <n>", "Target confidence score (0-100)", "80")
+  .action(async (path: string, opts: Record<string, unknown>) => {
+    const repoPath = resolve(path);
+    try {
+      const analyzer = new RepositoryAnalyzer({
+        repoPath,
+        maxCommits: 500,
+        maxPRs: 0,
+        forceRegenerate: false,
+        verbose: false,
+        tier: AnalysisTier.Two,
+      });
+
+      const analysis = await analyzer.analyze();
+      const answers = loadAnswers(repoPath) ?? undefined;
+      const baseScore = analyzer.computeConfidenceScore(analysis);
+      const score = answers && hasNewContent(answers) ? computeConfidenceWithAnswers(baseScore, answers) : baseScore;
+      const threshold = Number(opts.confidenceThreshold) || 80;
+      const smartQuestions = analyzer.generateSmartQuestions(analysis, score.gaps, answers);
+
+      const output = {
+        score: score.total,
+        grade: score.grade,
+        threshold,
+        belowThreshold: score.total < threshold,
+        breakdown: Object.fromEntries(
+          Object.entries(score.breakdown).map(([k, v]) => [k, { score: v.score, max: v.max }]),
+        ),
+        questions: smartQuestions.map((q) => ({
+          question: q.question,
+          context: q.context,
+          category: q.category,
+          dimension: q.dimension,
+        })),
+        answersFile: join(repoPath, ".claude", ".onboard-answers.json"),
+      };
+
+      console.log(JSON.stringify(output, null, 2));
+    } catch (err) {
+      console.error(JSON.stringify({ error: (err as Error).message }));
       process.exit(1);
     }
   });

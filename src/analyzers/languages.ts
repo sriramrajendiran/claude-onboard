@@ -2,24 +2,86 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
 import { GitReader } from "./git.js";
 
+export interface FrameworkQuestion {
+  question: string;
+  context: string;
+  /** Only ask if this condition returns true given the project's dependency list */
+  condition?: (deps: Set<string>) => boolean;
+}
+
 interface FrameworkSignature {
   name: string;
   files?: string[];
   packageDeps?: string[];
   minScore: number;
+  questions?: FrameworkQuestion[];
 }
 
 const FRAMEWORK_SIGNATURES: FrameworkSignature[] = [
-  { name: "Next.js", packageDeps: ["next"], minScore: 1 },
-  { name: "React", packageDeps: ["react", "react-dom"], minScore: 2 },
-  { name: "Vue", packageDeps: ["vue"], minScore: 1 },
+  {
+    name: "Next.js", packageDeps: ["next"], minScore: 1,
+    questions: [
+      { question: "Do you use App Router or Pages Router (or both)?", context: "Next.js routing strategy affects component patterns, data fetching, and file structure" },
+      { question: "Are components Server Components by default, or mostly client-side?", context: "Determines whether to add 'use client' directives and how to handle state" },
+      { question: "What data fetching pattern do you use? (RSC async, React Query, SWR, tRPC, fetch in Server Actions)", context: "Affects how new features should load and cache data" },
+      { question: "Do you use Server Actions, API routes, or an external API for mutations?", context: "Determines where to put write operations and form handling" },
+    ],
+  },
+  {
+    name: "React", packageDeps: ["react", "react-dom"], minScore: 2,
+    questions: [
+      { question: "What state management do you use? (Redux, Zustand, Jotai, MobX, Context, or none)", context: "Determines how new components should read/write shared state" },
+      { question: "What styling approach? (Tailwind, CSS Modules, styled-components, Emotion, plain CSS)", context: "New components should follow the established styling pattern" },
+      { question: "What routing library? (React Router, TanStack Router, or framework-provided)", context: "Affects how to add new pages and navigation", condition: (deps) => !deps.has("next") },
+    ],
+  },
+  {
+    name: "Vue", packageDeps: ["vue"], minScore: 1,
+    questions: [
+      { question: "Options API or Composition API?", context: "Vue 3 supports both — new components should match the project convention" },
+      { question: "What state management? (Pinia, Vuex, or composables)", context: "Determines where shared state lives" },
+    ],
+  },
   { name: "Angular", packageDeps: ["@angular/core"], minScore: 1 },
   { name: "Svelte", packageDeps: ["svelte"], minScore: 1 },
-  { name: "Express", packageDeps: ["express"], minScore: 1 },
-  { name: "Fastify", packageDeps: ["fastify"], minScore: 1 },
-  { name: "NestJS", packageDeps: ["@nestjs/core"], minScore: 1 },
-  { name: "Django", files: ["manage.py"], packageDeps: ["django"], minScore: 1 },
-  { name: "FastAPI", packageDeps: ["fastapi"], minScore: 1 },
+  {
+    name: "Express", packageDeps: ["express"], minScore: 1,
+    questions: [
+      { question: "What auth strategy? (JWT, sessions, OAuth, API keys)", context: "Auth approach affects middleware, route guards, and how to protect new endpoints" },
+      { question: "How are routes organized? (single file, feature folders, controller classes)", context: "Determines where to add new endpoints" },
+      { question: "Do you use raw SQL, a query builder, or an ORM for database access?", context: "Affects how to write data access code in new features" },
+    ],
+  },
+  {
+    name: "Fastify", packageDeps: ["fastify"], minScore: 1,
+    questions: [
+      { question: "What auth strategy? (JWT, sessions, OAuth, API keys)", context: "Auth approach affects hooks, decorators, and how to protect new routes" },
+      { question: "Do you use the Fastify plugin system for feature organization?", context: "Determines how to structure new functionality" },
+    ],
+  },
+  {
+    name: "NestJS", packageDeps: ["@nestjs/core"], minScore: 1,
+    questions: [
+      { question: "Do you use the default Express adapter or Fastify?", context: "Affects middleware compatibility and performance patterns" },
+      { question: "How do you handle auth? (@nestjs/passport, custom guards, external service)", context: "Determines guard and decorator patterns for new modules" },
+    ],
+  },
+  {
+    name: "Django", files: ["manage.py"], packageDeps: ["django"], minScore: 1,
+    questions: [
+      { question: "Django REST Framework or plain Django views?", context: "DRF has serializers, viewsets, and routers — plain Django uses templates/forms" },
+      { question: "Class-based views or function-based views?", context: "New views should match the existing pattern" },
+      { question: "Do you use Celery or another task queue for background jobs?", context: "Affects how to handle long-running operations" },
+    ],
+  },
+  {
+    name: "FastAPI", packageDeps: ["fastapi"], minScore: 1,
+    questions: [
+      { question: "How do you organize routers? (single file, feature folders, APIRouter per domain)", context: "Determines where to add new endpoints" },
+      { question: "What database pattern? (SQLAlchemy with sessions, Tortoise ORM, raw asyncpg)", context: "Affects how to write data access in new features" },
+      { question: "Do you use Pydantic v1 or v2 model patterns?", context: "v1 and v2 have different syntax for validators and model config" },
+    ],
+  },
   { name: "Flask", packageDeps: ["flask"], minScore: 1 },
   { name: "Gin", packageDeps: ["github.com/gin-gonic/gin"], minScore: 1 },
   { name: "Fiber", packageDeps: ["github.com/gofiber/fiber"], minScore: 1 },
@@ -54,9 +116,24 @@ const BUILD_TOOL_SIGNATURES: FrameworkSignature[] = [
 ];
 
 const ORM_SIGNATURES: FrameworkSignature[] = [
-  { name: "Prisma", packageDeps: ["prisma", "@prisma/client"], minScore: 1 },
-  { name: "TypeORM", packageDeps: ["typeorm"], minScore: 1 },
-  { name: "Drizzle", packageDeps: ["drizzle-orm"], minScore: 1 },
+  {
+    name: "Prisma", packageDeps: ["prisma", "@prisma/client"], minScore: 1,
+    questions: [
+      { question: "Do you use raw SQL ($queryRaw) for complex queries, or strictly Prisma Client?", context: "Determines whether new features can use raw SQL or must use the Prisma query API" },
+    ],
+  },
+  {
+    name: "TypeORM", packageDeps: ["typeorm"], minScore: 1,
+    questions: [
+      { question: "Do you use Active Record or Data Mapper pattern with TypeORM?", context: "Active Record puts queries on entities; Data Mapper uses repositories" },
+    ],
+  },
+  {
+    name: "Drizzle", packageDeps: ["drizzle-orm"], minScore: 1,
+    questions: [
+      { question: "Do you use Drizzle's relational queries or raw SQL builder for complex joins?", context: "Affects how to write data access for new features" },
+    ],
+  },
   { name: "Sequelize", packageDeps: ["sequelize"], minScore: 1 },
   { name: "SQLAlchemy", packageDeps: ["sqlalchemy"], minScore: 1 },
   { name: "ActiveRecord", files: ["Gemfile"], packageDeps: ["activerecord"], minScore: 1 },
@@ -111,7 +188,8 @@ function shouldIgnore(path: string): boolean {
 
 export class LanguageDetector {
   private readonly repoPath: string;
-  private readonly allDeps = new Set<string>();
+  readonly deps = new Set<string>();
+  private readonly allDeps = this.deps;
   private readonly allFiles: string[];
 
   constructor(repoPath: string) {
@@ -330,4 +408,24 @@ export class LanguageDetector {
     }
     return systems;
   }
+}
+
+/** Get framework-specific HITL questions for detected frameworks and ORMs. */
+export function getFrameworkQuestions(
+  detectedFrameworks: string[],
+  detectedOrms: string[],
+  deps: Set<string>,
+): Array<{ framework: string; question: string; context: string }> {
+  const results: Array<{ framework: string; question: string; context: string }> = [];
+  const allSigs = [...FRAMEWORK_SIGNATURES, ...ORM_SIGNATURES];
+
+  const detected = new Set([...detectedFrameworks, ...detectedOrms]);
+  for (const sig of allSigs) {
+    if (!detected.has(sig.name) || !sig.questions) continue;
+    for (const q of sig.questions) {
+      if (q.condition && !q.condition(deps)) continue;
+      results.push({ framework: sig.name, question: q.question, context: q.context });
+    }
+  }
+  return results;
 }

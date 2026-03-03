@@ -4,7 +4,6 @@ import {
   writeFileSync,
   mkdirSync,
   rmSync,
-  statSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
 import type {
@@ -16,7 +15,6 @@ import type {
 } from "../types.js";
 import {
   renderClaudeMd,
-  renderRootClaudeMd,
   renderFolderClaudeMd,
   renderOnboardCommand,
   renderStatusCommand,

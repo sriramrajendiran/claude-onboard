@@ -113,6 +113,18 @@ ANSWERS_FILE="$REPO_ROOT/.claude/.onboard-answers.json"
 if [ ! -f "$ANSWERS_FILE" ]; then
   echo "\\033[33m⚠️  Documentation may have gaps — run 'claude-onboard init --interactive' to improve\\033[0m" 2>/dev/null || true
 fi
+
+# Detect significant churn and suggest interactive update
+SNAPSHOT_FILE="$REPO_ROOT/.claude/.onboard-snapshot.json"
+if [ -f "$SNAPSHOT_FILE" ] && command -v git >/dev/null 2>&1; then
+  LAST_SHA=$(grep -o '"sha":"[^"]*"' "$SNAPSHOT_FILE" 2>/dev/null | head -1 | cut -d'"' -f4)
+  if [ -n "$LAST_SHA" ]; then
+    CHANGED_COUNT=$(git diff --name-only "$LAST_SHA" HEAD 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$CHANGED_COUNT" -ge 15 ]; then
+      echo "\\033[33m⚠️  \${CHANGED_COUNT} files changed since last onboarding — run 'claude-onboard update --interactive' to update context\\033[0m" 2>/dev/null || true
+    fi
+  fi
+fi
 `;
 }
 

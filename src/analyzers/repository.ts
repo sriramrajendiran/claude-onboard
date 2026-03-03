@@ -14,8 +14,7 @@ import type {
   SmartQuestion,
 } from "../types.js";
 import { GitReader } from "./git.js";
-import type { SinglePassResult } from "./git.js";
-import { LanguageDetector } from "./languages.js";
+import { LanguageDetector, getFrameworkQuestions } from "./languages.js";
 import { ConventionExtractor } from "./conventions.js";
 import { ArchitectureInferrer } from "./architecture.js";
 import { GitHubClient } from "./github.js";
@@ -24,6 +23,7 @@ import { ImportGraphBuilder } from "./imports.js";
 
 export class RepositoryAnalyzer {
   private readonly options: OnboardOptions;
+  private langDetector?: LanguageDetector;
 
   constructor(options: OnboardOptions) {
     this.options = { ...options, repoPath: resolve(options.repoPath) };
@@ -61,7 +61,8 @@ export class RepositoryAnalyzer {
     const trackedFiles = git.getTrackedFiles();
 
     onProgress?.("Detecting languages and frameworks", 30);
-    const langDetector = new LanguageDetector(repoPath);
+    this.langDetector = new LanguageDetector(repoPath);
+    const langDetector = this.langDetector;
     const langInfo = langDetector.detect();
 
     onProgress?.("Extracting conventions", 40);
@@ -418,9 +419,6 @@ export class RepositoryAnalyzer {
     if (sa) {
       const cmds = sa.buildCommands;
       const cmdNames = new Set(cmds.map((c) => c.name));
-      const fromScripts = cmds.filter((c) => c.source.includes("package.json") || c.source.includes("Makefile") || c.source.includes("scripts"));
-      const fromInference = cmds.filter((c) => !c.source.includes("package.json") && !c.source.includes("Makefile") && !c.source.includes("scripts"));
-
       // 5pts per command type, but only full credit if from explicit scripts
       for (const [name, label] of [["build", "build"], ["test", "test"], ["run", "run"], ["lint", "lint"]] as const) {
         const matchNames = name === "run" ? ["run", "dev", "start", "run-local"] : name === "lint" ? ["lint", "typecheck", "format"] : [name];
@@ -684,6 +682,23 @@ export class RepositoryAnalyzer {
       dimension: "domainQA",
       category: "tribal",
     });
+
+    // ── Framework-specific questions (up to 4) ──
+    const fwQuestions = getFrameworkQuestions(
+      analysis.frameworks,
+      analysis.sourceAnalysis?.dependencies
+        ?.filter((d) => d.group === "database")
+        .map((d) => d.name) ?? [],
+      this.langDetector?.deps ?? new Set(),
+    );
+    for (const fq of fwQuestions.slice(0, 4)) {
+      questions.push({
+        question: `[${fq.framework}] ${fq.question}`,
+        context: fq.context,
+        dimension: "domainQA",
+        category: "framework",
+      });
+    }
 
     // ── Gap-driven questions (from confidence scoring) ──
     for (const gap of gaps.filter((g) => g.impact === "high" || g.impact === "medium")) {

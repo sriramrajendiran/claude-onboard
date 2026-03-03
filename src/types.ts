@@ -230,7 +230,7 @@ export interface SmartQuestion {
   question: string;
   context?: string;
   dimension: string;
-  category: "hot-file" | "architecture" | "coupling" | "load-bearing" | "tribal" | "gap";
+  category: "hot-file" | "architecture" | "coupling" | "load-bearing" | "tribal" | "gap" | "framework";
 }
 
 // ── Import Graph ────────────────────────────────────────────────────────────

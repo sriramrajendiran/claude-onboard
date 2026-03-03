@@ -1,10 +1,10 @@
 # claude-onboard
 
-Auto-onboard any git repo for Claude Code with self-maintaining documentation, autonomous agents, and interactive confidence scoring.
+Auto-onboard any git repo for Claude Code with self-maintaining documentation, autonomous agents, and doc-quality scoring.
 
 ## What it does
 
-One command analyzes your repository — git history, source code, architecture, conventions — and generates a complete `.claude/` structure including repo-specific autonomous agents. If the plugin isn't confident in what it found, it asks you to fill the gaps. Git hooks keep docs fresh automatically.
+One command analyzes your repository — git history, source code, architecture, conventions — and generates a complete `.claude/` structure including repo-specific autonomous agents. The **doc-maintainer agent** then evaluates documentation quality against actual code, asks targeted questions about gaps, and iterates until confidence is high. Git hooks keep docs fresh automatically.
 
 ```
 $ npx claude-onboard init
@@ -26,6 +26,8 @@ $ npx claude-onboard init
    Code Patterns        15/15 ✓
    Domain Context       14/15 ~
    Testing              8/10  ~
+
+   💡 For deeper doc quality scoring, spawn the doc-maintainer agent in Claude Code
 ```
 
 ## Prerequisites
@@ -37,10 +39,12 @@ $ npx claude-onboard init
 ## Quick Start
 
 ```bash
-# Checkout any repo and run:
+# Install and generate baseline docs
+npm i -D claude-onboard
 npx claude-onboard init
 
-# That's it. Claude Code now has full context and agents for the codebase.
+# Then in Claude Code, run /project:update-docs to spawn the doc-maintainer agent
+# for deep quality scoring, targeted questions, and doc improvements
 ```
 
 ## Installation
@@ -92,7 +96,7 @@ Autonomous specialists that Claude spawns for delegated work. Each agent carries
 |-------|---------------|-------------|
 | **reviewer** | Always | Reviews code against repo conventions, validates co-change pairs, checks blast radius on load-bearing modules |
 | **test-writer** | Test framework detected | Generates tests matching the repo's exact framework, structure, and naming patterns |
-| **doc-maintainer** | Always | Detects doc staleness, updates write-once files, has persistent project memory |
+| **doc-maintainer** | Always | Evaluates doc quality against code, asks targeted questions, improves coverage. Owns the quality scoring loop |
 | **security-auditor** | Always | Framework-specific vulnerability scanning (Spring: SpEL/HQL injection, actuator exposure; Express: prototype pollution; etc.) |
 
 Agent frontmatter includes `model`, `permissionMode`, `maxTurns`, `memory`, and `isolation` for precise control. CLAUDE.md tells Claude when to spawn each agent.
@@ -103,9 +107,9 @@ User-invoked interactive workflows accessible via slash commands:
 
 | Command | Description |
 |---------|-------------|
-| `/project:onboard` | Get oriented with the codebase |
+| `/project:onboard` | Get oriented — or run first-time setup if not yet onboarded |
 | `/project:status` | Check doc health and confidence |
-| `/project:update-docs` | Update docs for recent changes |
+| `/project:update-docs` | Update docs and spawn doc-maintainer for quality scoring |
 | `/project:pr-review` | Review a PR with project context |
 | `/project:ask` | Ask questions about the repo |
 
@@ -125,10 +129,11 @@ Shared knowledge base that agents, commands, and Claude conversations all refere
 ├── CLAUDE.md                    # Main context file (everything Claude needs)
 ├── .onboarder-meta.json         # Generation metadata
 ├── .onboard-answers.json        # Human answers (persisted)
+├── .onboard-score.json          # Doc quality score (written by doc-maintainer agent)
 ├── agents/
 │   ├── reviewer.md              # Code review with co-change validation
 │   ├── test-writer.md           # Test generation (if test framework detected)
-│   ├── doc-maintainer.md        # Documentation maintenance with project memory
+│   ├── doc-maintainer.md        # Doc quality evaluation and improvement
 │   └── security-auditor.md      # Framework-specific security auditing
 ├── commands/
 │   ├── onboard.md               # /project:onboard
@@ -147,9 +152,13 @@ src/components/CLAUDE.md         # Folder-level context (auto-generated for hot 
 src/api/CLAUDE.md
 ```
 
-## How Confidence Scoring Works
+## How Quality Scoring Works
 
-The plugin scores its own confidence (0-100) across 6 dimensions:
+Documentation quality is evaluated at two levels:
+
+### CLI Heuristic Score (fast, no LLM)
+
+The CLI scores confidence (0-100) across 6 dimensions during `init` and `update`:
 
 | Dimension | Max | What it measures |
 |-----------|-----|-----------------|
@@ -160,14 +169,21 @@ The plugin scores its own confidence (0-100) across 6 dimensions:
 | **Domain Context** | 15 | Did we find team rules/conventions, or just git-inferred data? |
 | **Testing** | 10 | Do we know the test framework, structure, and commands? |
 
-When confidence is below the threshold (default 80), the plugin **automatically prompts** you to fill gaps. Your answers are:
+When confidence is below the threshold (default 80), the CLI **prompts** you to fill gaps via `$EDITOR`. Your answers are saved to `.claude/.onboard-answers.json` and preserved across updates.
 
-- Saved to `.claude/.onboard-answers.json`
-- Injected into the generated CLAUDE.md
-- Preserved across regenerations and updates
-- Used to re-score confidence after each round
+### Doc-Maintainer Agent Score (deep, reads actual docs + code)
 
-The loop continues until the target score is reached, you skip all questions, or 5 rounds complete.
+The doc-maintainer agent provides the **authoritative** quality score. It:
+
+1. Reads the generated documentation
+2. Cross-references against actual source code
+3. Scores across 8 dimensions (project identity, build & run, architecture, key types, conventions, framework decisions, domain context, staleness)
+4. Asks targeted questions based on real gaps found (not heuristic gaps)
+5. Updates docs with answers
+6. Re-evaluates until score ≥ 80 or 5 rounds complete
+7. Writes the score to `.claude/.onboard-score.json`
+
+Spawn it via `/project:update-docs` in Claude Code.
 
 ## Self-Maintenance
 
@@ -179,9 +195,7 @@ merge  → post-merge hook  → docs refresh (synchronous)
 rebase → post-rewrite hook → docs refresh
 ```
 
-Updates are throttled (max once per 5 minutes) and fail silently — they never block git operations. Human answers persist across updates.
-
-For strategic documentation updates (new modules, shifted architecture), spawn the **doc-maintainer** agent — it has persistent project memory and knows which files need manual vs automatic updates.
+Updates are throttled (max once per 5 minutes) and fail silently — they never block git operations. Human answers persist across updates. When 15+ files change, the hook warns you to run the doc-maintainer agent for deeper review.
 
 ## CLI Reference
 
@@ -201,6 +215,10 @@ Options:
 
 # Incremental update (preserves human answers)
 claude-onboard update [path] [--since <sha>] [--mode commit|merge|rebase|manual]
+claude-onboard update --interactive  # Run confidence scoring loop
+
+# Output score and questions as JSON (for agent consumption)
+claude-onboard questions [path] [--confidence-threshold <n>]
 
 # Health check + confidence score
 claude-onboard status [path]
@@ -226,8 +244,9 @@ npx claude-onboard init --confidence-threshold 90
 # CI pipeline — no prompts, JSON output
 npx claude-onboard init --ci
 
-# Skip interactive prompts
+# Generate baseline docs, then use agent for quality scoring
 npx claude-onboard init --no-interactive
+# In Claude Code: /project:update-docs
 
 # Check if docs are stale
 npx claude-onboard status
@@ -257,7 +276,7 @@ npx claude-onboard update
 | Ruby | Rails | Bundler | ActiveRecord |
 | PHP | Laravel | Composer | Eloquent |
 
-Security auditor generates **framework-specific** vulnerability checks for each detected stack.
+Framework-specific questions are asked during onboarding (e.g., "App Router or Pages Router?" for Next.js). Security auditor generates framework-specific vulnerability checks.
 
 ## Uninstalling
 
