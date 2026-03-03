@@ -1,6 +1,6 @@
 {
   "name": "claude-onboard",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Claude Code MCP plugin: auto-onboard any repo with self-maintaining documentation",
   "type": "module",
   "main": "./dist/index.js",
