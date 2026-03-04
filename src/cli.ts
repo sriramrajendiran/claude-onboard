@@ -452,8 +452,7 @@ program
       console.log(`${c.blue("🚀")} Next Steps`);
       console.log("   1. Open Claude Code in this directory");
       console.log("   2. Claude now has full context about your codebase");
-      console.log("   3. Try: /project:status to verify docs are healthy");
-      console.log("   4. Try: /project:ask how does auth work?");
+      console.log("   3. Try: /onboard to verify docs are healthy");
       console.log("");
     } catch (err) {
       spinner?.fail((err as Error).message);

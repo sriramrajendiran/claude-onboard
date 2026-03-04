@@ -1,6 +1,6 @@
 {
   "name": "claude-onboard",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Auto-onboard any repo with self-maintaining Claude Code documentation",
   "type": "module",
   "main": "./dist/cli.js",

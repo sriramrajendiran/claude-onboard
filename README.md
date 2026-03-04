@@ -43,8 +43,8 @@ $ npx claude-onboard init
 npm i -D claude-onboard
 npx claude-onboard init
 
-# Then in Claude Code, run /project:update-context to spawn the context-maintainer agent
-# for deep quality scoring, targeted questions, and doc improvements
+# Then in Claude Code, run /onboard to spawn the context-maintainer agent
+# for deep context extraction, quality scoring, and doc improvements
 ```
 
 ## Installation
@@ -92,7 +92,7 @@ User-invoked interactive workflows accessible via slash commands:
 
 | Command | Description |
 |---------|-------------|
-| `/project:onboard` | Get oriented — or run first-time setup if not yet onboarded |
+| `/project:onboard` | Spawns the context-maintainer agent — handles first-time setup, updates, and deep context extraction |
 | `/project:status` | Check doc health and confidence |
 | `/project:update-context` | Update context and spawn context-maintainer for deep extraction |
 | `/project:pr-review` | Review a PR with project context |
@@ -168,7 +168,7 @@ The context-maintainer agent provides the **authoritative** quality score. It:
 6. Re-evaluates until score ≥ 80 or 5 rounds complete
 7. Writes the score to `.claude/.onboard-score.json`
 
-Spawn it via `/project:update-context` in Claude Code.
+Spawn it via `/project:onboard` or `/project:update-context` in Claude Code.
 
 ## Self-Maintenance
 
@@ -229,9 +229,9 @@ npx claude-onboard init --confidence-threshold 90
 # CI pipeline — no prompts, JSON output
 npx claude-onboard init --ci
 
-# Generate baseline docs, then use agent for quality scoring
+# Generate baseline docs, then use agent for deep context extraction
 npx claude-onboard init --no-interactive
-# In Claude Code: /project:update-context
+# In Claude Code: /onboard
 
 # Check if docs are stale
 npx claude-onboard status

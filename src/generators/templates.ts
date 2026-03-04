@@ -713,19 +713,13 @@ name: onboard
 description: Get oriented with this codebase — or run initial setup if not yet onboarded
 ---
 
-First, check if \`.claude/CLAUDE.md\` exists.
+Spawn the **context-maintainer** agent. It will handle everything: checking if docs exist, running initial setup or updates as needed, mining git history, evaluating quality, asking targeted questions, and improving coverage.
 
-**If it does NOT exist (first-time setup):**
-1. Run \`npx claude-onboard init --no-interactive\` to generate baseline documentation
-2. Then spawn the **context-maintainer** agent to evaluate documentation quality, ask targeted questions, and improve coverage until the confidence score reaches the target
-
-**If it already exists:**
-1. Read \`.claude/CLAUDE.md\` — it contains everything you need: project purpose, commands, tech stack, architecture, code patterns, conventions, and gotchas
-2. Give a concise summary of:
-   - What this project does and its domain concepts
-   - The key commands (build, test, run)
-   - Architecture and code patterns to follow
-   - Gotchas or quirks to watch out for
+After the context-maintainer finishes, read \`.claude/CLAUDE.md\` and give a concise summary of:
+- What this project does and its domain concepts
+- The key commands (build, test, run)
+- Architecture and code patterns to follow
+- Gotchas or quirks to watch out for
 `;
 }
 
@@ -1075,6 +1069,13 @@ export function renderContextMaintainerAgent(analysis: RepositoryAnalysis): stri
     "4. **Populating context** into the right files so every future Claude session starts with full understanding",
     "",
     "## Context Extraction Playbook",
+    "",
+    "### Phase 0: Bootstrap if needed",
+    "",
+    "Check if `.claude/CLAUDE.md` exists.",
+    "- If it does NOT exist, run `npx claude-onboard init --no-interactive` first to generate baseline documentation from static analysis.",
+    "- If it does exist but is stale (check `.claude/.onboarder-meta.json` — if more than 10 commits have landed since `lastUpdated`), run `npx claude-onboard update` to refresh the auto-generated sections.",
+    "- Then proceed to Phase 1.",
     "",
     "### Phase 1: Understand what's already captured",
     "",
