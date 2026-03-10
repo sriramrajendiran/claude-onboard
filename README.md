@@ -1,10 +1,10 @@
 # claude-onboard
 
-Auto-onboard any git repo for Claude Code with self-maintaining context, autonomous agents, and confidence scoring.
+Auto-onboard any git repo for Claude Code with self-maintaining context, autonomous agents, decision memory, and confidence scoring.
 
 ## What it does
 
-One command analyzes your repository — git history, source code, architecture, conventions — and generates a complete `.claude/` structure including repo-specific autonomous agents. The **context-maintainer agent** then acts like a senior developer onboarding the repo — extracting context from code, git history, and developer knowledge, asking targeted questions about gaps, and populating it into the right files until confidence is high. Git hooks keep docs fresh automatically.
+One command analyzes your repository — git history, source code, architecture, conventions — and generates a complete `.claude/` structure including repo-specific autonomous agents and a **decision memory** system. The **context-maintainer agent** acts like a senior developer onboarding the repo — extracting context from code, git history, and developer knowledge. The **decision-memory agent** captures every architectural decision, convention choice, and piece of tribal knowledge as you work — building a compounding knowledge base that makes every future session smarter. Git hooks keep docs fresh and capture decisions automatically.
 
 ```
 $ npx claude-onboard init
@@ -16,8 +16,12 @@ $ npx claude-onboard init
    Primary language:  Java
    Frameworks:        Spring Boot
 
-🤖 Agents (4 built)
-   reviewer, test-writer, context-maintainer, security-auditor
+🤖 Agents (5 built)
+   reviewer, test-writer, context-maintainer, security-auditor, decision-memory
+
+🧠 Decision Memory
+   .decisions/ scaffold created
+   Pre-commit hook installed (captures decisions on every commit)
 
 📊 Documentation Confidence: 91/100 (A)
    Project Identity     20/20 ✓
@@ -69,9 +73,9 @@ npm install -D claude-onboard
 npx claude-onboard init
 ```
 
-## Three-Layer Architecture
+## Four-Layer Architecture
 
-claude-onboard generates three complementary layers:
+claude-onboard generates four complementary layers:
 
 ### Agents (`.claude/agents/`)
 
@@ -79,6 +83,7 @@ Autonomous specialists that Claude spawns for delegated work. Each agent carries
 
 | Agent | When generated | What it does |
 |-------|---------------|-------------|
+| **decision-memory** | Always | Captures architectural decisions, convention choices, rejected alternatives, and tribal knowledge. Triggered automatically on pre-commit to review staged changes — asks questions via AskUserQuestion until every ambiguity is resolved. Builds a compounding `.decisions/` knowledge base that persists across sessions |
 | **reviewer** | Always | Reviews code against repo conventions, validates co-change pairs, checks blast radius on load-bearing modules |
 | **test-writer** | Test framework detected | Generates tests matching the repo's exact framework, structure, and naming patterns |
 | **context-maintainer** | Always | Senior-developer onboarding agent. On initial onboard, walks the last 200-400 commit diffs to deeply understand how the codebase evolves. Writes findings where they belong — folder-specific context into folder-level CLAUDE.md files, cross-cutting patterns into `.claude/context/` files, and creates new topic files (e.g., `decisions.md`, `tech-debt.md`) as needed. On subsequent runs, reads only diffs since the last update. Owns the quality scoring loop |
@@ -97,15 +102,29 @@ User-invoked interactive workflows accessible via slash commands:
 | `/project:update-context` | Update context and spawn context-maintainer for deep extraction |
 | `/project:pr-review` | Review a PR with project context |
 | `/project:ask` | Ask questions about the repo |
+| `/project:capture-decisions` | Manually trigger decision capture — reviews recent changes and asks about decisions |
 
 ### Context (`.claude/context/` + `CLAUDE.md`)
 
 Shared knowledge base that agents, commands, and Claude conversations all reference:
 
-- `CLAUDE.md` — project identity, commands, architecture, conventions, key types, critical paths, agents
+- `CLAUDE.md` — project identity, commands, architecture, conventions, key types, critical paths, agents, decision memory instructions
 - `context/architecture.md` — detailed architecture breakdown
 - `context/patterns.md` — code patterns, conventions, team rules
 - `context/hotfiles.md` — critical paths, co-change pairs, load-bearing modules
+
+### Decision Memory (`.decisions/`)
+
+Persistent institutional knowledge base that compounds over time:
+
+- `active/` — Current decisions: architectural (ARCH), convention (CONV), rejection records (REJ), scope (SCOPE), behavioral (BEH)
+- `knowledge/` — Learned knowledge from Q&A: codebase (KNOW), process (PROC), domain (DOM), preferences (PREF), constraints (CONST), history (HIST)
+- `superseded/` — Decisions that were later overridden (immutable history)
+- `session-logs/` — Per-session capture narratives
+- `questions-asked.log` — Dedup log ensuring no question is asked twice
+- `INDEX.md` — Auto-maintained decision and knowledge log
+
+The decision-memory agent follows an **Ask → Learn → Store** loop: encounter ambiguity → check existing knowledge → ask if not found → record permanently → cross-reference. Knowledge maturity progresses from "new hire" (asks lots of basic questions) through "contributing" (edge cases and domain logic) to "senior" (deep trade-offs, identifies inconsistencies).
 
 ## Generated File Structure
 
@@ -116,6 +135,7 @@ Shared knowledge base that agents, commands, and Claude conversations all refere
 ├── .onboard-answers.json        # Human answers (persisted)
 ├── .onboard-score.json          # Doc quality score (written by context-maintainer agent)
 ├── agents/
+│   ├── decision-memory.md       # Decision capture and active knowledge acquisition
 │   ├── reviewer.md              # Code review with co-change validation
 │   ├── test-writer.md           # Test generation (if test framework detected)
 │   ├── context-maintainer.md    # Context extraction and quality scoring
@@ -125,13 +145,24 @@ Shared knowledge base that agents, commands, and Claude conversations all refere
 │   ├── status.md                # /project:status
 │   ├── update-context.md        # /project:update-context
 │   ├── pr-review.md             # /project:pr-review
-│   └── ask.md                   # /project:ask
+│   ├── ask.md                   # /project:ask
+│   └── capture-decisions.md     # /project:capture-decisions
 ├── context/
 │   ├── architecture.md          # Architecture deep-dive
 │   ├── patterns.md              # Code patterns and conventions
 │   └── hotfiles.md              # Critical paths and coupling data
 └── hooks/
-    └── update-context.sh       # Auto-update runner
+    ├── update-context.sh        # Auto-update runner
+    └── decision-capture.sh      # Pre-commit decision capture engine
+
+.decisions/
+├── INDEX.md                     # Auto-maintained decision + knowledge log
+├── README.md                    # Framework guide
+├── active/                      # Current decisions (ARCH, CONV, REJ, SCOPE, BEH)
+├── knowledge/                   # Learned knowledge (KNOW, PROC, DOM, PREF, CONST, HIST)
+├── superseded/                  # Overridden decisions (immutable history)
+├── session-logs/                # Per-session capture narratives
+└── questions-asked.log          # Dedup tracker
 
 src/components/CLAUDE.md         # Folder-level context (auto-generated for hot directories)
 src/api/CLAUDE.md
@@ -172,15 +203,33 @@ Spawn it via `/project:onboard` or `/project:update-context` in Claude Code.
 
 ## Self-Maintenance
 
-Git hooks keep docs fresh automatically:
+Git hooks keep docs fresh and capture decisions automatically:
 
 ```
-commit → post-commit hook → update-context.sh → docs refresh (background)
-merge  → post-merge hook  → docs refresh (synchronous)
-rebase → post-rewrite hook → docs refresh
+pre-commit → decision-capture.sh → decision-memory agent reviews staged changes (interactive)
+commit     → post-commit hook    → update-context.sh → docs refresh (background)
+merge      → post-merge hook     → docs refresh (synchronous)
+rebase     → post-rewrite hook   → docs refresh
 ```
 
-Updates are throttled (max once per 5 minutes) and fail silently — they never block git operations. Human answers persist across updates. When 15+ files change, the hook warns you to run the context-maintainer agent for deeper review.
+### Pre-commit: Decision Capture
+
+The pre-commit hook is the key innovation. On every commit, it:
+1. Captures the staged diff
+2. Triggers the decision-memory agent to analyze the changes
+3. The agent identifies decisions, ambiguous code, and knowledge gaps
+4. Uses `AskUserQuestion` to ask the developer until every change is understood
+5. Records all captured decisions and knowledge in `.decisions/`
+6. Auto-stages the new `.decisions/` files
+7. Only then lets the commit proceed
+
+This ensures **no institutional knowledge is lost** — every architectural choice, convention shift, and workaround is captured at the moment it happens.
+
+To skip decision capture for a specific commit: `git commit --no-verify`
+
+### Post-commit: Doc Updates
+
+Context updates are throttled (max once per 5 minutes) and fail silently — they never block git operations. Human answers persist across updates. When 15+ files change, the hook warns you to run the context-maintainer agent for deeper review.
 
 ## CLI Reference
 
@@ -260,6 +309,8 @@ Framework-specific questions are asked during onboarding (e.g., "App Router or P
 npx claude-onboard uninstall
 # To also remove generated docs:
 rm -rf .claude/
+# To also remove decision memory:
+rm -rf .decisions/
 ```
 
 ## License

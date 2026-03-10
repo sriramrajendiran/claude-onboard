@@ -32,6 +32,21 @@ export function renderPrepareCommitMsgHook(): string {
   return "";
 }
 
+export function renderPreCommitHook(): string {
+  return wrapInMarkers(`# claude-onboard: pre-commit decision capture hook
+# Triggers decision-memory agent to review staged changes for decisions and ambiguity.
+# Runs interactively — will ask questions until all changes are understood.
+if [ -f ".claude/hooks/decision-capture.sh" ]; then
+  sh .claude/hooks/decision-capture.sh
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -ne 0 ]; then
+    echo "\\033[33m⚠️  Decision capture was interrupted. Commit aborted.\\033[0m"
+    echo "To skip decision capture: git commit --no-verify"
+    exit 1
+  fi
+fi`);
+}
+
 export function renderUpdateContextScript(): string {
   return `#!/bin/sh
 # claude-onboard: update-context runner
@@ -128,6 +143,123 @@ fi
 `;
 }
 
+export function renderDecisionCaptureScript(): string {
+  return `#!/bin/sh
+# claude-onboard: decision capture script
+# Called by the pre-commit hook to review staged changes.
+# Uses the decision-memory agent to identify decisions and ambiguous code.
+# Loops asking questions until the agent is satisfied.
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo ".")"
+DECISIONS_DIR="$REPO_ROOT/.decisions"
+LOG_FILE="$DECISIONS_DIR/session-logs/pre-commit.log"
+LOCK_FILE="$REPO_ROOT/.claude/.decision-capture-lock"
+
+# Skip if no .decisions directory (not initialized)
+if [ ! -d "$DECISIONS_DIR" ]; then
+  exit 0
+fi
+
+# Skip if DECISION_CAPTURE_SKIP is set (allows nested commits from the agent)
+if [ -n "\${DECISION_CAPTURE_SKIP:-}" ]; then
+  exit 0
+fi
+
+# Skip during rebase/merge operations
+if [ -d "$REPO_ROOT/.git/rebase-merge" ] || [ -d "$REPO_ROOT/.git/rebase-apply" ] || [ -f "$REPO_ROOT/.git/MERGE_HEAD" ]; then
+  exit 0
+fi
+
+# Get staged changes
+STAGED_FILES=$(git diff --cached --name-only 2>/dev/null)
+if [ -z "$STAGED_FILES" ]; then
+  exit 0
+fi
+
+# Skip if only .decisions/ files are staged (avoid recursion)
+NON_DECISION_FILES=$(echo "$STAGED_FILES" | grep -v "^\\.decisions/" | head -1)
+if [ -z "$NON_DECISION_FILES" ]; then
+  exit 0
+fi
+
+# Lock check (prevent concurrent capture)
+if [ -f "$LOCK_FILE" ]; then
+  exit 0
+fi
+echo $$ > "$LOCK_FILE" 2>/dev/null || true
+trap 'rm -f "$LOCK_FILE" 2>/dev/null' EXIT INT TERM
+
+# Generate diff summary for the agent
+STAGED_STAT=$(git diff --cached --stat 2>/dev/null)
+STAGED_DIFF=$(git diff --cached 2>/dev/null)
+
+# Ensure log directory exists
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+
+log() {
+  echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ") $1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log "Decision capture triggered for: $STAGED_FILES"
+
+# Check if claude CLI is available
+if ! command -v claude >/dev/null 2>&1; then
+  log "Skipped: claude CLI not found"
+  exit 0
+fi
+
+# Build the prompt for the decision-memory agent
+PROMPT="You are being triggered by a pre-commit hook. Review the following staged changes and capture any decisions, ambiguous code, or knowledge gaps.
+
+## Staged Files
+$STAGED_STAT
+
+## Full Diff
+$STAGED_DIFF
+
+## Instructions
+1. Read the diff carefully
+2. Check .decisions/ for existing knowledge about these areas
+3. Identify any architectural decisions, convention changes, ambiguous code, or unexplained patterns
+4. For EACH gap found, ask the developer using AskUserQuestion until you fully understand
+5. Record all captured decisions and knowledge in .decisions/
+6. Update .decisions/INDEX.md with new entries
+7. Do NOT let any ambiguity pass — keep asking until you are 100% clear on every change
+
+After recording, stage the new .decisions/ files:
+DECISION_CAPTURE_SKIP=1 git add .decisions/"
+
+# Run the decision-memory agent
+echo "\\033[36m🧠 Decision Memory: Reviewing staged changes...\\033[0m"
+echo ""
+
+claude --agent decision-memory --allowedTools "Read,Write,Edit,Glob,Grep,Bash,AskUserQuestion" --print "$PROMPT" 2>&1
+AGENT_EXIT=$?
+
+if [ $AGENT_EXIT -ne 0 ]; then
+  log "Agent exited with code $AGENT_EXIT"
+  echo ""
+  echo "\\033[33m⚠️  Decision capture encountered an issue.\\033[0m"
+  echo "Continue with commit? [y/N] "
+  read -r REPLY </dev/tty
+  case "$REPLY" in
+    [yY]*) exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+
+# Auto-stage any new decision files
+if [ -d "$DECISIONS_DIR" ]; then
+  DECISION_CAPTURE_SKIP=1 git add "$DECISIONS_DIR" 2>/dev/null || true
+fi
+
+log "Decision capture complete"
+echo ""
+echo "\\033[32m✓ Decisions captured. Proceeding with commit.\\033[0m"
+exit 0
+`;
+}
+
 export function renderUninstallScript(): string {
   return `#!/bin/sh
 # claude-onboard: uninstall script
@@ -136,7 +268,7 @@ export function renderUninstallScript(): string {
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo ".")"
 
 echo "Removing claude-onboard git hooks..."
-for HOOK in post-commit post-merge post-rewrite prepare-commit-msg; do
+for HOOK in pre-commit post-commit post-merge post-rewrite prepare-commit-msg; do
   HOOK_FILE="$REPO_ROOT/.git/hooks/$HOOK"
   if [ -f "$HOOK_FILE" ]; then
     # Remove only our markers
@@ -156,9 +288,12 @@ done
 
 echo "Removing update-context script..."
 rm -f "$REPO_ROOT/.claude/hooks/update-context.sh"
+rm -f "$REPO_ROOT/.claude/hooks/decision-capture.sh"
 rm -f "$REPO_ROOT/.claude/.update-lock"
+rm -f "$REPO_ROOT/.claude/.decision-capture-lock"
 
 echo "Done. To also remove generated docs, run: rm -rf .claude/"
+echo "To also remove decision memory, run: rm -rf .decisions/"
 `;
 }
 

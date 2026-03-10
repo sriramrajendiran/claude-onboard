@@ -21,6 +21,7 @@ import {
   renderUpdateContextCommand,
   renderPRReviewCommand,
   renderAskCommand,
+  renderDecisionCaptureCommand,
   renderArchitectureContext,
   renderPatternsContext,
   renderHotfilesContext,
@@ -81,6 +82,7 @@ export class DocumentGenerator {
       [".claude/commands/update-context.md", renderUpdateContextCommand()],
       [".claude/commands/pr-review.md", renderPRReviewCommand()],
       [".claude/commands/ask.md", renderAskCommand()],
+      [".claude/commands/capture-decisions.md", renderDecisionCaptureCommand()],
     ];
 
     for (const [path, content] of commands) {
@@ -99,6 +101,9 @@ export class DocumentGenerator {
     for (const af of agentFiles) {
       files.push(this.smartWrite(af.path, af.content, force));
     }
+
+    // ── Decision Memory scaffold ──
+    files.push(...this.scaffoldDecisions(force));
 
     // Folder-level CLAUDE.md for progressive context disclosure
     const sa = this.analysis.sourceAnalysis;
@@ -232,6 +237,107 @@ export class DocumentGenerator {
   }
 
 
+
+  private scaffoldDecisions(force: boolean): GeneratedFile[] {
+    const files: GeneratedFile[] = [];
+    const decisionsDir = join(this.repoPath, ".decisions");
+
+    // Only scaffold if .decisions/ doesn't exist yet (unless forced)
+    if (existsSync(decisionsDir) && !force) {
+      return files;
+    }
+
+    // Create directory structure
+    for (const dir of ["active", "knowledge", "superseded", "session-logs"]) {
+      const dirPath = join(decisionsDir, dir);
+      if (!existsSync(dirPath)) {
+        mkdirSync(dirPath, { recursive: true });
+      }
+    }
+
+    // INDEX.md
+    files.push(this.smartWrite(".decisions/INDEX.md", `# Decision & Knowledge Index — ${this.analysis.repoName}
+
+> Auto-maintained by decision-memory agent. Do not edit manually.
+
+## Active Decisions
+
+_No decisions recorded yet. The decision-memory agent will populate this as decisions are captured._
+
+## Knowledge Base
+
+_No knowledge entries yet. The decision-memory agent will build this over time._
+
+## Statistics
+
+- Decisions: 0
+- Knowledge entries: 0
+- Maturity: 🌱 Uninitialized
+`, force));
+
+    // README.md
+    files.push(this.smartWrite(".decisions/README.md", `# Decision Memory
+
+This directory contains the institutional knowledge for this repository — decisions, rationale, rejected alternatives, and learned knowledge captured by the decision-memory agent.
+
+## Structure
+
+- \`active/\` — Current, in-effect decisions (ARCH-*, CONV-*, REJ-*, SCOPE-*, BEH-*)
+- \`knowledge/\` — Learned knowledge from Q&A (KNOW-*, PROC-*, DOM-*, PREF-*, CONST-*, HIST-*)
+- \`superseded/\` — Decisions that were later overridden
+- \`session-logs/\` — Per-session capture logs
+- \`questions-asked.log\` — Dedup log of every question asked
+- \`INDEX.md\` — Auto-generated decision + knowledge log
+
+## How It Works
+
+The decision-memory agent is triggered automatically on pre-commit hooks. It:
+1. Reviews staged changes for decisions and ambiguous code
+2. Checks existing knowledge before asking questions
+3. Asks the developer via AskUserQuestion until every change is understood
+4. Records all decisions and knowledge permanently
+
+You can also trigger it manually by spawning the decision-memory agent.
+
+## Categories
+
+### Decisions
+| Prefix | Category | Examples |
+|--------|----------|----------|
+| ARCH | Architectural | Database choice, API design, service boundaries |
+| CONV | Convention | Naming, file structure, code style |
+| REJ | Rejection | Why we didn't use GraphQL, why not microservices |
+| SCOPE | Scope | Deferred features, priority calls |
+| BEH | Behavioral | Error handling, UX choices, edge cases |
+
+### Knowledge
+| Prefix | Category | Examples |
+|--------|----------|----------|
+| KNOW | Codebase | Module boundaries, why code exists |
+| PROC | Process | Deploy flow, PR review, release process |
+| DOM | Domain | Business logic, customer requirements |
+| PREF | Preference | Team work style, implicit conventions |
+| CONST | Constraint | Compliance limits, infrastructure constraints |
+| HIST | History | Why code is this way, past incidents |
+`, force));
+
+    // questions-asked.log (empty)
+    const logPath = join(decisionsDir, "questions-asked.log");
+    if (!existsSync(logPath)) {
+      writeFileSync(logPath, "# Questions Asked Log — tracks every question to prevent duplicates\n# Format: date | id | question | status\n", "utf-8");
+      files.push({ path: ".decisions/questions-asked.log", content: "", action: "created" });
+    }
+
+    // .gitkeep files for empty directories
+    for (const dir of ["active", "knowledge", "superseded", "session-logs"]) {
+      const keepPath = join(decisionsDir, dir, ".gitkeep");
+      if (!existsSync(keepPath)) {
+        writeFileSync(keepPath, "", "utf-8");
+      }
+    }
+
+    return files;
+  }
 
   private writeFile(fullPath: string, content: string): void {
     const dir = dirname(fullPath);

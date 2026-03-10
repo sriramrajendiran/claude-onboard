@@ -4,6 +4,7 @@ import {
   renderTestWriterAgent,
   renderContextMaintainerAgent,
   renderSecurityAuditorAgent,
+  renderDecisionMemoryAgent,
 } from "./templates.js";
 
 interface AgentTemplate {
@@ -32,6 +33,11 @@ const AGENT_TEMPLATES: AgentTemplate[] = [
     filename: "security-auditor.md",
     condition: () => true,
     render: renderSecurityAuditorAgent,
+  },
+  {
+    filename: "decision-memory.md",
+    condition: () => true,
+    render: renderDecisionMemoryAgent,
   },
 ];
 

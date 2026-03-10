@@ -11,7 +11,9 @@ import {
   renderPostMergeHook,
   renderPostRewriteHook,
   renderPrepareCommitMsgHook,
+  renderPreCommitHook,
   renderUpdateContextScript,
+  renderDecisionCaptureScript,
   MARKER_START,
   MARKER_END,
 } from "./scripts.js";
@@ -37,7 +39,16 @@ export class HookInstaller {
     );
     chmodSync(join(hooksDir, "update-context.sh"), 0o755);
 
+    // Install decision capture script
+    writeFileSync(
+      join(hooksDir, "decision-capture.sh"),
+      renderDecisionCaptureScript(),
+      "utf-8",
+    );
+    chmodSync(join(hooksDir, "decision-capture.sh"), 0o755);
+
     const hooks: [string, string][] = [
+      ["pre-commit", renderPreCommitHook()],
       ["post-commit", renderPostCommitHook()],
       ["post-merge", renderPostMergeHook()],
       ["post-rewrite", renderPostRewriteHook()],
@@ -67,6 +78,7 @@ export class HookInstaller {
   async uninstall(): Promise<string[]> {
     const removed: string[] = [];
     const hookNames = [
+      "pre-commit",
       "post-commit",
       "post-merge",
       "post-rewrite",
